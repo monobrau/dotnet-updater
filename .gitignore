@@ -1,0 +1,25 @@
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Downloaded installers (if testing locally)
+*.exe
+*.msi
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# PowerShell
+*.ps1xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
