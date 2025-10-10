@@ -48,6 +48,77 @@ Write-Host ".NET Framework & .NET Updater" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Detect OS version for compatibility checking
+$osInfo = Get-CimInstance Win32_OperatingSystem
+$osVersion = [System.Version]$osInfo.Version
+$osName = $osInfo.Caption
+$osBuildNumber = $osInfo.BuildNumber
+
+Write-Host "Detected OS: $osName" -ForegroundColor Gray
+Write-Host "OS Version: $($osVersion.Major).$($osVersion.Minor) Build $osBuildNumber" -ForegroundColor Gray
+Write-Host ""
+
+# Determine OS compatibility
+$script:SupportsModernDotNet = $false
+$script:SupportsDotNet481 = $false
+
+# Windows 10 build 14393 (1607) or later, or Windows 11, or Server 2016+
+if ($osVersion.Major -ge 10) {
+    if ($osVersion.Build -ge 14393) {
+        $script:SupportsModernDotNet = $true
+        $script:SupportsDotNet481 = $true
+    }
+    elseif ($osVersion.Build -ge 10240) {
+        # Windows 10 RTM (10240) to 1511 - supports .NET 6 but not 7+
+        $script:SupportsModernDotNet = $false  # Will check per-version
+        $script:SupportsDotNet481 = $false
+    }
+}
+# Windows Server 2012 R2
+elseif ($osVersion.Major -eq 6 -and $osVersion.Minor -eq 3) {
+    $script:SupportsModernDotNet = $true  # Supports .NET 6-8
+    $script:SupportsDotNet481 = $false
+}
+# Windows 8.1 / Server 2012 R2
+elseif ($osVersion.Major -eq 6 -and $osVersion.Minor -ge 2) {
+    $script:SupportsModernDotNet = $false  # Limited support
+    $script:SupportsDotNet481 = $false
+}
+# Windows 7 SP1 / Server 2008 R2
+elseif ($osVersion.Major -eq 6 -and $osVersion.Minor -eq 1) {
+    $script:SupportsModernDotNet = $false  # Can do .NET 6 only
+    $script:SupportsDotNet481 = $false
+}
+
+# Helper function to check if specific .NET version is supported
+function Test-DotNetVersionSupported {
+    param(
+        [string]$DotNetMajorVersion
+    )
+    
+    $majorVer = [int]$DotNetMajorVersion
+    
+    # .NET 6 - Supports Windows 7 SP1+, Server 2012+
+    if ($majorVer -eq 6) {
+        return ($osVersion.Major -ge 6 -and $osVersion.Minor -ge 1)
+    }
+    
+    # .NET 7, 8, 9 - Requires Windows 10 1607+ or Server 2012+
+    if ($majorVer -ge 7) {
+        if ($osVersion.Major -ge 10 -and $osVersion.Build -ge 14393) {
+            return $true
+        }
+        if ($osVersion.Major -eq 6 -and $osVersion.Minor -ge 3) {
+            return $true  # Server 2012 R2
+        }
+        return $false
+    }
+    
+    return $true
+}
+
+Write-Host ""
+
 # Define all .NET versions and their download URLs
 $DotNetVersions = @{
     "Framework-4.6.2" = @{
@@ -436,6 +507,13 @@ try {
                 Write-Host "  .NET Framework $($netInfo.TargetVersion) is already installed (Release: $($installed.ReleaseValue)) - Skipping" -ForegroundColor Cyan
             }
             else {
+                # Check OS compatibility for .NET Framework 4.8.1
+                if ($netInfo.TargetVersion -eq "4.8.1" -and -not $script:SupportsDotNet481) {
+                    Write-Host "  .NET Framework 4.8.1 is not supported on this OS version - Skipping" -ForegroundColor Yellow
+                    Write-Host "  Requires Windows 10 1607+ or Windows Server 2016+" -ForegroundColor Gray
+                    continue
+                }
+                
                 # For Framework, we'll use the offline installer
                 $url = $netInfo.URLs.Offline
                 $installerPath = Join-Path $TempDir "dotnet-framework-$($netInfo.TargetVersion).exe"
@@ -493,6 +571,13 @@ try {
                 # Check if this is .NET 7.x or 8.x that should be updated to .NET 9.x
                 $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
                 $shouldUpdateTo9 = ($majorVersion -eq 7 -or $majorVersion -eq 8)
+                
+                # Check OS compatibility before updating
+                if (-not (Test-DotNetVersionSupported -DotNetMajorVersion "9")) {
+                    Write-Host "  .NET 9 is not supported on this OS version - Skipping update" -ForegroundColor Yellow
+                    Write-Host "  Current .NET $majorVersion will remain installed" -ForegroundColor Cyan
+                    continue
+                }
                 
                 if ($shouldUpdateTo9) {
                     Write-Host "  .NET $($version.Split('-')[1]) detected - updating to latest .NET 9.x..." -ForegroundColor Yellow
