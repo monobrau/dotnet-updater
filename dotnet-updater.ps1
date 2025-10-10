@@ -580,6 +580,14 @@ try {
                 }
                 
                 if ($shouldUpdateTo9) {
+                    # Check if .NET 9 is already installed
+                    $dotnet9Installed = $installedVersions.Keys | Where-Object { $_ -match "NET-9\.0" }
+                    
+                    if ($dotnet9Installed) {
+                        Write-Host "  .NET 9.0 is already installed - Skipping upgrade from .NET $majorVersion" -ForegroundColor Cyan
+                        continue
+                    }
+                    
                     Write-Host "  .NET $($version.Split('-')[1]) detected - updating to latest .NET 9.x..." -ForegroundColor Yellow
                     
                     # Get the latest .NET 9.0 download URLs dynamically
