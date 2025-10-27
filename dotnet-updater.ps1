@@ -467,13 +467,15 @@ if ($dotnetInfo.Available) {
         # Check for runtime installations
         $runtimeMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.NETCore\.App $majorVersion\." }
         $desktopMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.WindowsDesktop\.App $majorVersion\." }
+        $aspCoreMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.AspNetCore\.App $majorVersion\." }
         $sdkMatch = $dotnetInfo.SDKs | Where-Object { $_ -match "^$majorVersion\." }
         
-        if ($runtimeMatch -or $desktopMatch -or $sdkMatch) {
+        if ($runtimeMatch -or $desktopMatch -or $aspCoreMatch -or $sdkMatch) {
             $installedVersions[$version] = @{
                 Installed = $true
                 Runtime = $runtimeMatch
                 Desktop = $desktopMatch
+                AspCore = $aspCoreMatch
                 SDK = $sdkMatch
                 IsFramework = $false
             }
@@ -511,6 +513,9 @@ foreach ($version in $installedVersions.Keys | Sort-Object) {
         }
         if ($installed.Desktop) {
             Write-Host "  Desktop: $($installed.Desktop)" -ForegroundColor Gray
+        }
+        if ($installed.AspCore) {
+            Write-Host "  ASP.NET Core: $($installed.AspCore)" -ForegroundColor Gray
         }
         if ($installed.SDK) {
             Write-Host "  SDK: $($installed.SDK)" -ForegroundColor Gray
