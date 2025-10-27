@@ -198,10 +198,11 @@ $DotNetVersions = @{
         TargetVersion = $null
         IsFramework = $false
         IsLTS = $true
+        AutoUpdate = $true
         URLs = @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/6.0/latest/dotnet-runtime-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0/latest/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/6.0/latest/dotnet-sdk-win-x64.exe"
+            Runtime = "https://dotnet.microsoft.com/en-us/download/dotnet/6.0"
+            Desktop = "https://dotnet.microsoft.com/en-us/download/dotnet/6.0"
+            SDK = "https://dotnet.microsoft.com/en-us/download/dotnet/6.0"
         }
     }
     "NET-7.0" = @{
@@ -209,10 +210,11 @@ $DotNetVersions = @{
         TargetVersion = $null
         IsFramework = $false
         IsLTS = $false
+        AutoUpdate = $true
         URLs = @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/7.0/latest/dotnet-runtime-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/7.0/latest/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/7.0/latest/dotnet-sdk-win-x64.exe"
+            Runtime = "https://dotnet.microsoft.com/en-us/download/dotnet/7.0"
+            Desktop = "https://dotnet.microsoft.com/en-us/download/dotnet/7.0"
+            SDK = "https://dotnet.microsoft.com/en-us/download/dotnet/7.0"
         }
     }
     "NET-8.0" = @{
@@ -220,10 +222,11 @@ $DotNetVersions = @{
         TargetVersion = $null
         IsFramework = $false
         IsLTS = $true
+        AutoUpdate = $true
         URLs = @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/8.0/latest/dotnet-runtime-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0/latest/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0/latest/dotnet-sdk-win-x64.exe"
+            Runtime = "https://dotnet.microsoft.com/en-us/download/dotnet/8.0"
+            Desktop = "https://dotnet.microsoft.com/en-us/download/dotnet/8.0"
+            SDK = "https://dotnet.microsoft.com/en-us/download/dotnet/8.0"
         }
     }
     "NET-9.0" = @{
@@ -231,10 +234,11 @@ $DotNetVersions = @{
         TargetVersion = $null
         IsFramework = $false
         IsLTS = $false
+        AutoUpdate = $true
         URLs = @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0/latest/dotnet-runtime-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0/latest/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0/latest/dotnet-sdk-win-x64.exe"
+            Runtime = "https://dotnet.microsoft.com/en-us/download/dotnet/9.0"
+            Desktop = "https://dotnet.microsoft.com/en-us/download/dotnet/9.0"
+            SDK = "https://dotnet.microsoft.com/en-us/download/dotnet/9.0"
         }
     }
 }
@@ -357,15 +361,62 @@ function Get-InstallerVersion {
 # Function to get the latest .NET 9.0 download URLs
 function Get-DotNet9DownloadUrls {
     try {
-        # Use the builds.dotnet.microsoft.com URLs which always point to the latest version
-        return @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0/latest/dotnet-runtime-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0/latest/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0/latest/dotnet-sdk-win-x64.exe"
+        # Get download URL from Microsoft download page
+        $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/9.0"
+        $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing
+        $content = $response.Content
+        
+        # Extract the direct download URL for Desktop Runtime (x64)
+        # The URL pattern is: href="https://download.visualstudio.microsoft.com/download/pr/.../windowsdesktop-runtime-9.x.x-win-x64.exe"
+        if ($content -match 'https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/windowsdesktop-runtime-9\.\d+\.\d+-win-x64\.exe') {
+            $desktopUrl = $matches[0] -replace 'href="', '' -replace '"', ''
+            return @{
+                Runtime = $desktopUrl
+                Desktop = $desktopUrl
+                SDK = $desktopUrl
+            }
         }
+        
+        Write-Warning "Could not extract download URL from Microsoft page"
+        return $null
     }
     catch {
         Write-Warning "Could not get .NET 9.0 download URLs: $_"
+        return $null
+    }
+}
+
+# Function to get download URL for .NET major version
+function Get-DotNetDownloadUrl {
+    param(
+        [int]$MajorVersion,
+        [string]$Component = "Desktop"  # Runtime, Desktop, or SDK
+    )
+    
+    try {
+        # Get download page
+        $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
+        $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing
+        $content = $response.Content
+        
+        # Extract the direct download URL
+        $pattern = if ($Component -eq "Desktop") {
+            'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/windowsdesktop-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
+        } elseif ($Component -eq "Runtime") {
+            'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
+        } else {
+            'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-sdk-\d+\.\d+\.\d+-win-x64\.exe)"'
+        }
+        
+        if ($content -match $pattern) {
+            return $matches[1]
+        }
+        
+        Write-Warning "Could not extract download URL from Microsoft page"
+        return $null
+    }
+    catch {
+        Write-Warning "Could not get .NET $MajorVersion download URL: $_"
         return $null
     }
 }
@@ -590,13 +641,18 @@ try {
                     
                     Write-Host "  .NET $($version.Split('-')[1]) detected - updating to latest .NET 9.x..." -ForegroundColor Yellow
                     
-                    # Get the latest .NET 9.0 download URLs dynamically
-                    $net9Urls = Get-DotNet9DownloadUrls
+                    # Get the download URL dynamically from Microsoft
+                    Write-Host "  Getting download URL from Microsoft..." -ForegroundColor Gray
+                    $url = Get-DotNetDownloadUrl -MajorVersion 9 -Component "Desktop"
                     
-                    if ($net9Urls -and $net9Urls.Desktop) {
-                        $url = $net9Urls.Desktop
-                        $installerPath = Join-Path $TempDir "dotnet-9.0-desktop.exe"
-                        $downloadedFiles += $installerPath
+                    if (-not $url) {
+                        Write-Warning "  Could not get download URL. Skipping update."
+                        continue
+                    }
+                    
+                    Write-Host "  Download URL: $url" -ForegroundColor Gray
+                    $installerPath = Join-Path $TempDir "dotnet-9.0-desktop.exe"
+                    $downloadedFiles += $installerPath
                         
                         try {
                             Write-Host "  Downloading latest .NET 9.0 Desktop Runtime..."
