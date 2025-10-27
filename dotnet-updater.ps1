@@ -701,50 +701,6 @@ try {
                     Write-Host "  .NET $($version.Split('-')[1]) Desktop Runtime is already installed - Skipping" -ForegroundColor Cyan
                 }
             }
-            else {
-                # For .NET, we'll update Desktop Runtime (includes regular runtime)
-                $url = $netInfo.URLs.Desktop
-                $installerPath = Join-Path $TempDir "dotnet-$($version.Split('-')[1])-desktop.exe"
-                $downloadedFiles += $installerPath
-                
-                try {
-                    Write-Host "  Downloading .NET $($version.Split('-')[1]) Desktop Runtime..."
-                    Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
-                    Write-Host "  Download complete." -ForegroundColor Green
-                    
-                    if (Test-Path $installerPath) {
-                        # Check installer version
-                        $installerVersion = Get-InstallerVersion -FilePath $installerPath
-                        if ($installerVersion) {
-                            Write-Host "  Downloaded installer version: $installerVersion" -ForegroundColor Gray
-                        }
-                        
-                        Write-Host "  Installing .NET $($version.Split('-')[1]) Desktop Runtime..."
-                        $silentArgs = $SilentArgsMap["NET"]
-                        $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
-                        
-                        switch ($Process.ExitCode) {
-                            0 { 
-                                Write-Host "  Installation successful." -ForegroundColor Green
-                            }
-                            3010 { 
-                                Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
-                                $RebootRequired = $true
-                            }
-                            1641 {
-                                Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
-                                $RebootRequired = $true
-                            }
-                            default { 
-                                Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
-                            }
-                        }
-                    }
-                }
-                catch {
-                    Write-Warning "  Failed: $_"
-                }
-            }
         }
         Write-Host ""
     }
