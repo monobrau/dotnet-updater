@@ -653,47 +653,43 @@ try {
                     Write-Host "  Download URL: $url" -ForegroundColor Gray
                     $installerPath = Join-Path $TempDir "dotnet-9.0-desktop.exe"
                     $downloadedFiles += $installerPath
+                    
+                    try {
+                        Write-Host "  Downloading latest .NET 9.0 Desktop Runtime..."
+                        Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
+                        Write-Host "  Download complete." -ForegroundColor Green
                         
-                        try {
-                            Write-Host "  Downloading latest .NET 9.0 Desktop Runtime..."
-                            Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
-                            Write-Host "  Download complete." -ForegroundColor Green
+                        if (Test-Path $installerPath) {
+                            # Check installer version
+                            $installerVersion = Get-InstallerVersion -FilePath $installerPath
+                            if ($installerVersion) {
+                                Write-Host "  Downloaded installer version: $installerVersion" -ForegroundColor Gray
+                            }
                             
-                            if (Test-Path $installerPath) {
-                                # Check installer version
-                                $installerVersion = Get-InstallerVersion -FilePath $installerPath
-                                if ($installerVersion) {
-                                    Write-Host "  Downloaded installer version: $installerVersion" -ForegroundColor Gray
+                            Write-Host "  Installing .NET 9.0 Desktop Runtime..."
+                            $silentArgs = $SilentArgsMap["NET"]
+                            $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
+                            
+                            switch ($Process.ExitCode) {
+                                0 { 
+                                    Write-Host "  Installation successful." -ForegroundColor Green
                                 }
-                                
-                                Write-Host "  Installing .NET 9.0 Desktop Runtime..."
-                                $silentArgs = $SilentArgsMap["NET"]
-                                $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
-                                
-                                switch ($Process.ExitCode) {
-                                    0 { 
-                                        Write-Host "  Installation successful." -ForegroundColor Green
-                                    }
-                                    3010 { 
-                                        Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
-                                        $RebootRequired = $true
-                                    }
-                                    1641 {
-                                        Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
-                                        $RebootRequired = $true
-                                    }
-                                    default { 
-                                        Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
-                                    }
+                                3010 { 
+                                    Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
+                                    $RebootRequired = $true
+                                }
+                                1641 {
+                                    Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
+                                    $RebootRequired = $true
+                                }
+                                default { 
+                                    Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
                                 }
                             }
                         }
-                        catch {
-                            Write-Warning "  Failed: $_"
-                        }
                     }
-                    else {
-                        Write-Warning "  Could not fetch .NET 9.0 download URLs. Skipping update."
+                    catch {
+                        Write-Warning "  Failed: $_"
                     }
                 }
                 else {
