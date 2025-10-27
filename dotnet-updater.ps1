@@ -232,9 +232,9 @@ $DotNetVersions = @{
         IsFramework = $false
         IsLTS = $false
         URLs = @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.9/dotnet-runtime-9.0.9-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0.9/windowsdesktop-runtime-9.0.9-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0.305/dotnet-sdk-9.0.305-win-x64.exe"
+            Runtime = "https://download.microsoft.com/dotnet/9.0/dotnet-runtime-win-x64.exe"
+            Desktop = "https://download.microsoft.com/dotnet/9.0/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://download.microsoft.com/dotnet/9.0/dotnet-sdk-win-x64.exe"
         }
     }
 }
@@ -357,11 +357,11 @@ function Get-InstallerVersion {
 # Function to get the latest .NET 9.0 download URLs
 function Get-DotNet9DownloadUrls {
     try {
-        # Use the direct URLs from the official Microsoft builds
+        # Use the generic URLs that automatically download the latest .NET 9.0 version
         return @{
-            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.9/dotnet-runtime-9.0.9-win-x64.exe"
-            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0.9/windowsdesktop-runtime-9.0.9-win-x64.exe"
-            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0.305/dotnet-sdk-9.0.305-win-x64.exe"
+            Runtime = "https://download.microsoft.com/dotnet/9.0/dotnet-runtime-win-x64.exe"
+            Desktop = "https://download.microsoft.com/dotnet/9.0/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://download.microsoft.com/dotnet/9.0/dotnet-sdk-win-x64.exe"
         }
     }
     catch {
