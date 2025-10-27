@@ -612,17 +612,29 @@ try {
             # .NET (Core/5+) update logic
             Write-Host "[$currentUpdate/$($installedVersions.Count)] Checking .NET $($version.Split('-')[1])..." -ForegroundColor Cyan
             
-            # Extract current version from installed info
-            $currentDesktopVersion = $null
+            # Extract current version from installed info - check Desktop, ASP.NET Core, or Runtime
+            $currentVersion = $null
             if ($installed.Desktop) {
                 $versionMatch = $installed.Desktop -match "(\d+\.\d+\.\d+)"
                 if ($versionMatch) {
-                    $currentDesktopVersion = $matches[1]
+                    $currentVersion = $matches[1]
+                }
+            }
+            elseif ($installed.AspCore) {
+                $versionMatch = $installed.AspCore -match "(\d+\.\d+\.\d+)"
+                if ($versionMatch) {
+                    $currentVersion = $matches[1]
+                }
+            }
+            elseif ($installed.Runtime) {
+                $versionMatch = $installed.Runtime -match "(\d+\.\d+\.\d+)"
+                if ($versionMatch) {
+                    $currentVersion = $matches[1]
                 }
             }
             
-            if ($currentDesktopVersion) {
-                Write-Host "  Current .NET $($version.Split('-')[1]) Desktop Runtime: $currentDesktopVersion" -ForegroundColor Gray
+            if ($currentVersion) {
+                Write-Host "  Current .NET $($version.Split('-')[1]) version: $currentVersion" -ForegroundColor Gray
                 
                 # Check if this is .NET 7.x or 8.x that should be updated to .NET 9.x
                 $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
@@ -699,8 +711,11 @@ try {
                 }
                 else {
                     # For .NET 6.0 LTS and .NET 9.0, keep current behavior
-                    Write-Host "  .NET $($version.Split('-')[1]) Desktop Runtime is already installed - Skipping" -ForegroundColor Cyan
+                    Write-Host "  .NET $($version.Split('-')[1]) is already installed - Skipping" -ForegroundColor Cyan
                 }
+            }
+            else {
+                Write-Host "  .NET $($version.Split('-')[1]) is installed but no update needed" -ForegroundColor Cyan
             }
         }
         Write-Host ""
