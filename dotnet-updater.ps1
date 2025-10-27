@@ -199,9 +199,9 @@ $DotNetVersions = @{
         IsFramework = $false
         IsLTS = $true
         URLs = @{
-            Runtime = "https://download.microsoft.com/dotnet/6.0/dotnet-runtime-win-x64.exe"
-            Desktop = "https://download.microsoft.com/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://download.microsoft.com/dotnet/6.0/dotnet-sdk-win-x64.exe"
+            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/6.0/latest/dotnet-runtime-win-x64.exe"
+            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0/latest/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/6.0/latest/dotnet-sdk-win-x64.exe"
         }
     }
     "NET-7.0" = @{
@@ -210,9 +210,9 @@ $DotNetVersions = @{
         IsFramework = $false
         IsLTS = $false
         URLs = @{
-            Runtime = "https://download.microsoft.com/dotnet/7.0/dotnet-runtime-win-x64.exe"
-            Desktop = "https://download.microsoft.com/dotnet/7.0/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://download.microsoft.com/dotnet/7.0/dotnet-sdk-win-x64.exe"
+            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/7.0/latest/dotnet-runtime-win-x64.exe"
+            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/7.0/latest/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/7.0/latest/dotnet-sdk-win-x64.exe"
         }
     }
     "NET-8.0" = @{
@@ -221,9 +221,9 @@ $DotNetVersions = @{
         IsFramework = $false
         IsLTS = $true
         URLs = @{
-            Runtime = "https://download.microsoft.com/dotnet/8.0/dotnet-runtime-win-x64.exe"
-            Desktop = "https://download.microsoft.com/dotnet/8.0/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://download.microsoft.com/dotnet/8.0/dotnet-sdk-win-x64.exe"
+            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/8.0/latest/dotnet-runtime-win-x64.exe"
+            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0/latest/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0/latest/dotnet-sdk-win-x64.exe"
         }
     }
     "NET-9.0" = @{
@@ -232,9 +232,9 @@ $DotNetVersions = @{
         IsFramework = $false
         IsLTS = $false
         URLs = @{
-            Runtime = "https://download.microsoft.com/dotnet/9.0/dotnet-runtime-win-x64.exe"
-            Desktop = "https://download.microsoft.com/dotnet/9.0/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://download.microsoft.com/dotnet/9.0/dotnet-sdk-win-x64.exe"
+            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0/latest/dotnet-runtime-win-x64.exe"
+            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0/latest/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0/latest/dotnet-sdk-win-x64.exe"
         }
     }
 }
@@ -357,11 +357,11 @@ function Get-InstallerVersion {
 # Function to get the latest .NET 9.0 download URLs
 function Get-DotNet9DownloadUrls {
     try {
-        # Use the generic URLs that automatically download the latest .NET 9.0 version
+        # Use the builds.dotnet.microsoft.com URLs which always point to the latest version
         return @{
-            Runtime = "https://download.microsoft.com/dotnet/9.0/dotnet-runtime-win-x64.exe"
-            Desktop = "https://download.microsoft.com/dotnet/9.0/windowsdesktop-runtime-win-x64.exe"
-            SDK = "https://download.microsoft.com/dotnet/9.0/dotnet-sdk-win-x64.exe"
+            Runtime = "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0/latest/dotnet-runtime-win-x64.exe"
+            Desktop = "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0/latest/windowsdesktop-runtime-win-x64.exe"
+            SDK = "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0/latest/dotnet-sdk-win-x64.exe"
         }
     }
     catch {
