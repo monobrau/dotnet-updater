@@ -8,9 +8,12 @@ A comprehensive PowerShell script that automatically updates .NET Runtime, Deskt
 - **Multiple Runtime Types** - Handles .NET Runtime, Desktop Runtime, and SDK
 - **Version Support** - .NET 6, 7, 8, 9 and .NET Framework 4.8.1
 - **Smart Updates** - Only downloads and installs what's needed
+- **LTS Patch Management** - .NET 6 and 8 receive patch updates automatically
 - **Silent Operation** - Runs without user interaction
 - **RMM/ScreenConnect Compatible** - Multiple output modes for automation tools
 - **Architecture Support** - Handles both x64 and x86 installations
+- **Security Hardened** - File validation, signature verification, and network retry logic
+- **Smart Runtime Selection** - Downloads appropriate runtime type (Desktop vs Server)
 
 ## Supported Versions
 
@@ -107,6 +110,30 @@ New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinu
    - Displays update status for each runtime
    - Reports success/failure with exit codes
 
+## Update Behavior
+
+### .NET Framework
+- Detects installed version and updates to the highest available Framework version
+- Example: .NET Framework 4.8 → 4.8.1
+
+### .NET 6.0 LTS (Long Term Support)
+- Receives **patch updates** within the 6.x branch
+- Example: 6.0.1 → 6.0.25 (latest patch)
+- **Does not** upgrade to .NET 7, 8, or 9
+
+### .NET 7.0 (End of Support)
+- Automatically **upgrades to .NET 9.0**
+- .NET 7 reached end of support, migration recommended
+
+### .NET 8.0 LTS (Long Term Support)
+- Receives **patch updates** within the 8.x branch
+- Example: 8.0.1 → 8.0.11 (latest patch)
+- **Does not** upgrade to .NET 9 (remains on LTS branch)
+
+### .NET 9.0 (Current)
+- Receives **patch updates** within the 9.x branch
+- Example: 9.0.0 → 9.0.1 (latest patch)
+
 ## Runtime Types
 
 ### .NET Runtime
@@ -120,6 +147,11 @@ Includes Windows Desktop components (WPF, Windows Forms). Required for desktop a
 
 ### .NET SDK
 Full development kit including compiler, tools, and runtimes. Required for development.
+
+### Smart Runtime Selection
+- **Desktop installations** - Receives Desktop Runtime (includes WPF, Windows Forms, and base Runtime)
+- **Server installations** - Receives base Runtime only (no Desktop components)
+- Automatically detects based on what's currently installed
 
 ## Example Output
 
@@ -171,7 +203,11 @@ Update process completed.
 
 - All downloads are from official Microsoft servers
 - No third-party hosting or modified installers
-- Downloads use HTTPS
+- Downloads use HTTPS with TLS 1.2
+- **Digital signature verification** - Validates Microsoft signature on all installers
+- **File integrity checks** - Validates file size and type before execution
+- **Network retry logic** - 3 attempts with exponential backoff for reliability
+- **Runtime type validation** - Prevents installing Desktop runtimes on servers
 - File version verification included
 
 ## Troubleshooting
@@ -212,6 +248,22 @@ Created for system administrators managing Windows environments
 Contributions welcome! Please test thoroughly before submitting pull requests.
 
 ## Changelog
+
+### v1.1 (2025-01-XX)
+- **Critical Bug Fixes**:
+  - Fixed duplicate .NET 9 installation when both .NET 7 and 8 are present
+  - Fixed .NET Framework update logic that prevented updates from executing
+  - Fixed runtime type mismatch (servers no longer get Desktop runtime)
+  - Implemented LTS patch update logic for .NET 6.0 and 8.0
+- **Security Enhancements**:
+  - Added digital signature verification (Microsoft signed)
+  - Added file size and type validation before execution
+  - Implemented network retry logic with exponential backoff (3 attempts)
+- **Improvements**:
+  - Converted debug output to Write-Verbose (use -Verbose flag for diagnostics)
+  - Smart runtime selection based on installation type (Desktop vs Server)
+  - Updated documentation to accurately reflect actual behavior
+  - Better error handling and reporting
 
 ### v1.0 (2024-10-10)
 - Initial release
