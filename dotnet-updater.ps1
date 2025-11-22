@@ -5,10 +5,11 @@
 .DESCRIPTION
     This comprehensive script scans for and updates ALL major .NET versions:
     - .NET Framework 4.6.2, 4.7, 4.7.1, 4.7.2, 4.8, 4.8.1
-    - .NET 6.0 LTS (keeps current version)
-    - .NET 7.0, .NET 8.0 LTS (updates to latest .NET 9.0)
-    - .NET 9.0 (if installed, keeps current version)
-    
+    - .NET 6.0 LTS (receives patch updates within 6.x branch)
+    - .NET 7.0 (updates to latest .NET 9.0)
+    - .NET 8.0 LTS (receives patch updates within 8.x branch)
+    - .NET 9.0 (receives patch updates within 9.x branch)
+
     The script runs completely silently with no user interaction required.
     It intelligently compares installed versions with target versions and skips updates
     for versions that are already up to date, saving time and bandwidth.
@@ -17,25 +18,35 @@
     File Name: dotnet-updater.ps1
     Run this script with administrative privileges.
     All URLs point to official Microsoft downloads.
-    
+
     Version Checking:
-    - .NET Framework: Compares against latest known versions
+    - .NET Framework: Detects installed version and updates to the latest available Framework version
     - .NET (Core/5+): Downloads and checks latest available versions
     - Automatically detects if downloaded installer is newer than installed version
     - Skips installation if current version is already up to date
     - Avoids unnecessary downloads when versions are already current
-    
-    Target Versions:
-    - .NET Framework 4.6.2: 4.6.2 (if installed)
-    - .NET Framework 4.7: 4.7 (if installed) 
-    - .NET Framework 4.7.1: 4.7.1 (if installed)
-    - .NET Framework 4.7.2: 4.7.2 (if installed)
-    - .NET Framework 4.8: 4.8 (if installed)
-    - .NET Framework 4.8.1: 4.8.1 (latest)
-    - .NET 6.0: Keep current LTS version (no update)
-    - .NET 7.0: Update to latest .NET 9.0
-    - .NET 8.0: Update to latest .NET 9.0
-    - .NET 9.0: Keep current version (no update)
+
+    Security Features:
+    - Network retry logic with exponential backoff (3 attempts)
+    - File size validation (minimum 1 MB)
+    - Digital signature verification (Microsoft signed)
+    - File type validation (.exe only)
+
+    Update Behavior:
+    - .NET Framework: Updates to the highest available Framework version (e.g., 4.8 → 4.8.1)
+    - .NET 6.0 LTS: Receives patch updates (e.g., 6.0.1 → 6.0.x)
+    - .NET 7.0: Updates to .NET 9.0 (end of support migration)
+    - .NET 8.0 LTS: Receives patch updates (e.g., 8.0.1 → 8.0.x)
+    - .NET 9.0: Receives patch updates (e.g., 9.0.0 → 9.0.x)
+
+    Runtime Type Detection:
+    - Desktop installations receive Desktop Runtime (includes WPF, WinForms)
+    - Server installations (ASP.NET Core only) receive base Runtime
+    - Prevents unnecessary Desktop components on servers
+
+    Verbosity:
+    - Run with -Verbose for detailed diagnostic output
+    - Default output shows only essential information
 #>
 
 #Requires -RunAsAdministrator
@@ -261,9 +272,9 @@ function Get-DotNetFrameworkVersion {
         }
     }
     catch {
-        Write-Host "  DEBUG: Error reading registry: $_" -ForegroundColor DarkGray
+        Write-Verbose "Error reading registry: $_"
     }
-    
+
     return $null
 }
 
@@ -294,22 +305,22 @@ function Compare-Version {
         [string]$CurrentVersion,
         [string]$TargetVersion
     )
-    
+
     if ([string]::IsNullOrEmpty($CurrentVersion) -or [string]::IsNullOrEmpty($TargetVersion)) {
-        Write-Host "  DEBUG: Version comparison failed - empty version string" -ForegroundColor DarkGray
+        Write-Verbose "Version comparison failed - empty version string"
         return $false
     }
-    
+
     try {
         # Clean versions - remove any non-numeric characters except dots
         $cleanCurrent = $CurrentVersion -replace '[^\d\.]', ''
         $cleanTarget = $TargetVersion -replace '[^\d\.]', ''
-        
+
         # Normalize version parts (ensure both have same number of parts)
         $currentParts = $cleanCurrent.Split('.')
         $targetParts = $cleanTarget.Split('.')
         $maxParts = [Math]::Max($currentParts.Length, $targetParts.Length)
-        
+
         # Pad with zeros to match part count
         while ($currentParts.Length -lt $maxParts) {
             $currentParts += "0"
@@ -317,20 +328,20 @@ function Compare-Version {
         while ($targetParts.Length -lt $maxParts) {
             $targetParts += "0"
         }
-        
+
         $normalizedCurrent = $currentParts -join '.'
         $normalizedTarget = $targetParts -join '.'
-        
+
         $current = [version]$normalizedCurrent
         $target = [version]$normalizedTarget
-        
+
         $result = ($current -ge $target)
-        Write-Host "  DEBUG: Comparing $normalizedCurrent >= $normalizedTarget = $result" -ForegroundColor DarkGray
-        
+        Write-Verbose "Comparing $normalizedCurrent >= $normalizedTarget = $result"
+
         return $result
     }
     catch {
-        Write-Host "  DEBUG: Version comparison exception: $_" -ForegroundColor DarkGray
+        Write-Verbose "Version comparison exception: $_"
         return $false
     }
 }
@@ -341,7 +352,7 @@ function Get-InstallerVersion {
         [Parameter(Mandatory=$true)]
         [string]$FilePath
     )
-    
+
     try {
         if (Test-Path $FilePath) {
             $versionInfo = (Get-Item $FilePath).VersionInfo
@@ -354,8 +365,102 @@ function Get-InstallerVersion {
     catch {
         Write-Warning "Could not read installer version: $_"
     }
-    
+
     return $null
+}
+
+# Function to download a file with retry logic and exponential backoff
+function Invoke-WebRequestWithRetry {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Uri,
+        [Parameter(Mandatory=$true)]
+        [string]$OutFile,
+        [int]$MaxRetries = 3,
+        [int]$InitialDelaySeconds = 2
+    )
+
+    $attempt = 0
+    $delay = $InitialDelaySeconds
+
+    while ($attempt -lt $MaxRetries) {
+        try {
+            $attempt++
+            Write-Verbose "Download attempt $attempt of $MaxRetries for $Uri"
+
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+            Write-Verbose "Download successful on attempt $attempt"
+            return $true
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+
+            if ($attempt -ge $MaxRetries) {
+                Write-Warning "Download failed after $MaxRetries attempts: $errorMessage"
+                throw
+            }
+
+            Write-Warning "Download attempt $attempt failed: $errorMessage. Retrying in $delay seconds..."
+            Start-Sleep -Seconds $delay
+            $delay = $delay * 2  # Exponential backoff
+        }
+    }
+
+    return $false
+}
+
+# Function to validate downloaded file
+function Test-DownloadedFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath,
+        [int]$MinimumSizeBytes = 1048576  # 1 MB minimum
+    )
+
+    if (-not (Test-Path $FilePath)) {
+        Write-Warning "Downloaded file does not exist: $FilePath"
+        return $false
+    }
+
+    $fileInfo = Get-Item $FilePath
+
+    # Check file size
+    if ($fileInfo.Length -lt $MinimumSizeBytes) {
+        Write-Warning "Downloaded file is too small ($(($fileInfo.Length / 1MB).ToString('N2')) MB). Minimum: $(($MinimumSizeBytes / 1MB).ToString('N2')) MB"
+        return $false
+    }
+
+    # Check file extension
+    if ($fileInfo.Extension -ne '.exe') {
+        Write-Warning "Downloaded file is not an executable (.exe): $($fileInfo.Extension)"
+        return $false
+    }
+
+    # Verify digital signature (Microsoft signed)
+    try {
+        $signature = Get-AuthenticodeSignature -FilePath $FilePath -ErrorAction Stop
+
+        if ($signature.Status -eq 'Valid') {
+            $signerSubject = $signature.SignerCertificate.Subject
+            # Check if signed by Microsoft
+            if ($signerSubject -match 'Microsoft' -or $signerSubject -match 'CN=Microsoft Corporation') {
+                Write-Verbose "File signature is valid and signed by Microsoft"
+                return $true
+            }
+            else {
+                Write-Warning "File is signed but not by Microsoft: $signerSubject"
+                return $false
+            }
+        }
+        else {
+            Write-Warning "File signature is invalid or missing: $($signature.Status)"
+            return $false
+        }
+    }
+    catch {
+        Write-Warning "Could not verify file signature: $_"
+        return $false
+    }
 }
 
 # Function to get the latest .NET 9.0 download URLs
@@ -392,33 +497,58 @@ function Get-DotNetDownloadUrl {
         [int]$MajorVersion,
         [string]$Component = "Desktop"  # Runtime, Desktop, or SDK
     )
-    
-    try {
-        # Get download page
-        $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
-        $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing
-        $content = $response.Content
-        
-        # Extract the direct download URL
-        $pattern = if ($Component -eq "Desktop") {
-            'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/windowsdesktop-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
-        } elseif ($Component -eq "Runtime") {
-            'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
-        } else {
-            'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-sdk-\d+\.\d+\.\d+-win-x64\.exe)"'
+
+    $maxRetries = 3
+    $attempt = 0
+    $delay = 2
+
+    while ($attempt -lt $maxRetries) {
+        try {
+            $attempt++
+            Write-Verbose "Fetching download page attempt $attempt of $maxRetries"
+
+            # Get download page
+            $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
+            $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing -ErrorAction Stop
+            $content = $response.Content
+
+            # Extract the direct download URL
+            $pattern = if ($Component -eq "Desktop") {
+                'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/windowsdesktop-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
+            } elseif ($Component -eq "Runtime") {
+                'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
+            } else {
+                'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-sdk-\d+\.\d+\.\d+-win-x64\.exe)"'
+            }
+
+            if ($content -match $pattern) {
+                Write-Verbose "Successfully extracted download URL on attempt $attempt"
+                return $matches[1]
+            }
+
+            # Pattern didn't match - log and retry
+            if ($attempt -lt $maxRetries) {
+                Write-Warning "Could not extract download URL from page. Retrying in $delay seconds..."
+                Start-Sleep -Seconds $delay
+                $delay = $delay * 2
+            }
         }
-        
-        if ($content -match $pattern) {
-            return $matches[1]
+        catch {
+            $errorMessage = $_.Exception.Message
+
+            if ($attempt -ge $maxRetries) {
+                Write-Warning "Could not get .NET $MajorVersion download URL after $maxRetries attempts: $errorMessage"
+                return $null
+            }
+
+            Write-Warning "Attempt $attempt failed: $errorMessage. Retrying in $delay seconds..."
+            Start-Sleep -Seconds $delay
+            $delay = $delay * 2
         }
-        
-        Write-Warning "Could not extract download URL from Microsoft page"
-        return $null
     }
-    catch {
-        Write-Warning "Could not get .NET $MajorVersion download URL: $_"
-        return $null
-    }
+
+    Write-Warning "Could not extract download URL from Microsoft page after $maxRetries attempts"
+    return $null
 }
 
 # Scan for installed versions
@@ -428,29 +558,54 @@ Write-Host ""
 $installedVersions = @{}
 $updateCount = 0
 
-# Check .NET Framework versions - only detect the highest installed version
+# Check .NET Framework versions - detect installed version and check for updates
 $releaseValue = Get-DotNetFrameworkVersion -RegistryPath "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" -RegistryValue "Release"
 
 if ($releaseValue) {
     Write-Host "Found .NET Framework release value: $releaseValue" -ForegroundColor Gray
-    
-    # Determine the highest Framework version based on release value
+
+    # Determine the currently installed Framework version
     $frameworkVersions = $DotNetVersions.Keys | Where-Object { $DotNetVersions[$_].IsFramework } | Sort-Object { $DotNetVersions[$_].MinRelease } -Descending
-    
+
+    $currentFrameworkVersion = $null
     foreach ($version in $frameworkVersions) {
         $dotNetInfo = $DotNetVersions[$version]
-        
+
         if ($releaseValue -ge $dotNetInfo.MinRelease) {
-            Write-Host "Detected .NET Framework $($dotNetInfo.TargetVersion) (Release: $releaseValue)" -ForegroundColor Gray
-            
-            $installedVersions[$version] = @{
-                Installed = $true
-                ReleaseValue = $releaseValue
-                Version = $dotNetInfo.TargetVersion
+            Write-Host "Detected .NET Framework $($dotNetInfo.TargetVersion) installed (Release: $releaseValue)" -ForegroundColor Gray
+            $currentFrameworkVersion = $version
+            break
+        }
+    }
+
+    # Check if there's a newer Framework version available
+    if ($currentFrameworkVersion) {
+        $currentMinRelease = $DotNetVersions[$currentFrameworkVersion].MinRelease
+
+        # Find the highest Framework version available
+        $newerVersions = $DotNetVersions.Keys | Where-Object {
+            $DotNetVersions[$_].IsFramework -and $DotNetVersions[$_].MinRelease -gt $releaseValue
+        } | Sort-Object { $DotNetVersions[$_].MinRelease } -Descending
+
+        if ($newerVersions) {
+            # Add the highest available newer version for update
+            $targetVersion = $newerVersions | Select-Object -First 1
+            $targetInfo = $DotNetVersions[$targetVersion]
+
+            Write-Host "Newer .NET Framework version available: $($targetInfo.TargetVersion) (Release: $($targetInfo.MinRelease))" -ForegroundColor Yellow
+
+            $installedVersions[$targetVersion] = @{
+                Installed = $false  # Not installed yet
+                CurrentReleaseValue = $releaseValue
+                TargetReleaseValue = $targetInfo.MinRelease
+                CurrentVersion = $DotNetVersions[$currentFrameworkVersion].TargetVersion
+                TargetVersion = $targetInfo.TargetVersion
                 IsFramework = $true
+                NeedsUpdate = $true
             }
             $updateCount++
-            break  # Only add the highest version detected
+        } else {
+            Write-Host ".NET Framework is up to date ($($DotNetVersions[$currentFrameworkVersion].TargetVersion))" -ForegroundColor Green
         }
     }
 }
@@ -499,12 +654,19 @@ if ($installedVersions.Count -eq 0) {
 foreach ($version in $installedVersions.Keys | Sort-Object) {
     $netInfo = $DotNetVersions[$version]
     $installed = $installedVersions[$version]
-    
+
     Write-Host ""
     if ($installed.IsFramework) {
-        Write-Host ".NET Framework $($netInfo.TargetVersion):" -ForegroundColor Green
-        Write-Host "  Release Value: $($installed.ReleaseValue)" -ForegroundColor Gray
-        Write-Host "  Status: INSTALLED" -ForegroundColor Green
+        if ($installed.NeedsUpdate) {
+            Write-Host ".NET Framework Update Available:" -ForegroundColor Yellow
+            Write-Host "  Current: $($installed.CurrentVersion) (Release: $($installed.CurrentReleaseValue))" -ForegroundColor Gray
+            Write-Host "  Target: $($installed.TargetVersion) (Release: $($installed.TargetReleaseValue))" -ForegroundColor Gray
+            Write-Host "  Status: UPDATE REQUIRED" -ForegroundColor Yellow
+        } else {
+            Write-Host ".NET Framework $($netInfo.TargetVersion):" -ForegroundColor Green
+            Write-Host "  Release Value: $($installed.ReleaseValue)" -ForegroundColor Gray
+            Write-Host "  Status: INSTALLED" -ForegroundColor Green
+        }
     }
     else {
         Write-Host ".NET $($version.Split('-')[1]):" -ForegroundColor Green
@@ -535,6 +697,7 @@ Write-Host ""
 $TempDir = $env:TEMP
 $RebootRequired = $false
 $downloadedFiles = @()
+$dotNet9InstalledThisSession = $false  # Track if .NET 9 was installed to prevent duplicate installations
 
 # Silent installation arguments
 $SilentArgsMap = @{
@@ -556,56 +719,58 @@ try {
         
         if ($installed.IsFramework) {
             # .NET Framework update logic
-            Write-Host "[$currentUpdate/$($installedVersions.Count)] Checking .NET Framework $($netInfo.TargetVersion)..." -ForegroundColor Cyan
-            
-            # Check if current release value matches or exceeds the target
-            if ($installed.ReleaseValue -ge $netInfo.MinRelease) {
-                Write-Host "  .NET Framework $($netInfo.TargetVersion) is already installed (Release: $($installed.ReleaseValue)) - Skipping" -ForegroundColor Cyan
+            Write-Host "[$currentUpdate/$($installedVersions.Count)] Updating .NET Framework $($installed.CurrentVersion) to $($netInfo.TargetVersion)..." -ForegroundColor Cyan
+
+            # Check OS compatibility for .NET Framework 4.8.1
+            if ($netInfo.TargetVersion -eq "4.8.1" -and -not $script:SupportsDotNet481) {
+                Write-Host "  .NET Framework 4.8.1 is not supported on this OS version - Skipping" -ForegroundColor Yellow
+                Write-Host "  Requires Windows 10 1607+ or Windows Server 2016+" -ForegroundColor Gray
+                continue
             }
-            else {
-                # Check OS compatibility for .NET Framework 4.8.1
-                if ($netInfo.TargetVersion -eq "4.8.1" -and -not $script:SupportsDotNet481) {
-                    Write-Host "  .NET Framework 4.8.1 is not supported on this OS version - Skipping" -ForegroundColor Yellow
-                    Write-Host "  Requires Windows 10 1607+ or Windows Server 2016+" -ForegroundColor Gray
+
+            # For Framework, we'll use the offline installer
+            $url = $netInfo.URLs.Offline
+            $installerPath = Join-Path $TempDir "dotnet-framework-$($netInfo.TargetVersion).exe"
+            $downloadedFiles += $installerPath
+
+            try {
+                Write-Host "  Downloading .NET Framework $($netInfo.TargetVersion)..."
+                Invoke-WebRequestWithRetry -Uri $url -OutFile $installerPath
+                Write-Host "  Download complete." -ForegroundColor Green
+
+                # Validate downloaded file
+                Write-Host "  Validating downloaded file..." -ForegroundColor Gray
+                if (-not (Test-DownloadedFile -FilePath $installerPath -MinimumSizeBytes 1048576)) {
+                    Write-Warning "  Downloaded file validation failed. Skipping installation."
                     continue
                 }
-                
-                # For Framework, we'll use the offline installer
-                $url = $netInfo.URLs.Offline
-                $installerPath = Join-Path $TempDir "dotnet-framework-$($netInfo.TargetVersion).exe"
-                $downloadedFiles += $installerPath
-                
-                try {
-                    Write-Host "  Downloading .NET Framework $($netInfo.TargetVersion)..."
-                    Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
-                    Write-Host "  Download complete." -ForegroundColor Green
-                    
-                    if (Test-Path $installerPath) {
-                        Write-Host "  Installing .NET Framework $($netInfo.TargetVersion)..."
-                        $silentArgs = $SilentArgsMap["Framework"]
-                        $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
-                        
-                        switch ($Process.ExitCode) {
-                            0 { 
-                                Write-Host "  Installation successful." -ForegroundColor Green
-                            }
-                            3010 { 
-                                Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
-                                $RebootRequired = $true
-                            }
-                            1641 {
-                                Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
-                                $RebootRequired = $true
-                            }
-                            default { 
-                                Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
-                            }
+                Write-Host "  Validation successful." -ForegroundColor Green
+
+                if (Test-Path $installerPath) {
+                    Write-Host "  Installing .NET Framework $($netInfo.TargetVersion)..."
+                    $silentArgs = $SilentArgsMap["Framework"]
+                    $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
+
+                    switch ($Process.ExitCode) {
+                        0 {
+                            Write-Host "  Installation successful." -ForegroundColor Green
+                        }
+                        3010 {
+                            Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
+                            $RebootRequired = $true
+                        }
+                        1641 {
+                            Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
+                            $RebootRequired = $true
+                        }
+                        default {
+                            Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
                         }
                     }
                 }
-                catch {
-                    Write-Warning "  Failed: $_"
-                }
+            }
+            catch {
+                Write-Warning "  Failed: $_"
             }
         }
         else {
@@ -648,58 +813,82 @@ try {
                 }
                 
                 if ($shouldUpdateTo9) {
-                    # Check if .NET 9 is already installed
+                    # Check if .NET 9 is already installed or was installed this session
                     $dotnet9Installed = $installedVersions.Keys | Where-Object { $_ -match "NET-9\.0" }
-                    
-                    if ($dotnet9Installed) {
+
+                    if ($dotnet9Installed -or $dotNet9InstalledThisSession) {
                         Write-Host "  .NET 9.0 is already installed - Skipping upgrade from .NET $majorVersion" -ForegroundColor Cyan
                         continue
                     }
                     
                     Write-Host "  .NET $($version.Split('-')[1]) detected - updating to latest .NET 9.x..." -ForegroundColor Yellow
-                    
+
+                    # Determine which component to download based on what's installed
+                    # Priority: Desktop (includes Runtime) > AspCore (includes Runtime) > Runtime
+                    $componentToInstall = if ($installed.Desktop) {
+                        "Desktop"
+                    } elseif ($installed.AspCore) {
+                        "Runtime"  # For server scenarios, install base Runtime instead of Desktop
+                    } else {
+                        "Runtime"
+                    }
+
+                    Write-Host "  Detected runtime type: $componentToInstall" -ForegroundColor Gray
+
                     # Get the download URL dynamically from Microsoft
                     Write-Host "  Getting download URL from Microsoft..." -ForegroundColor Gray
-                    $url = Get-DotNetDownloadUrl -MajorVersion 9 -Component "Desktop"
-                    
+                    $url = Get-DotNetDownloadUrl -MajorVersion 9 -Component $componentToInstall
+
                     if (-not $url) {
                         Write-Warning "  Could not get download URL. Skipping update."
                         continue
                     }
-                    
+
                     Write-Host "  Download URL: $url" -ForegroundColor Gray
-                    $installerPath = Join-Path $TempDir "dotnet-9.0-desktop.exe"
+                    $installerPath = Join-Path $TempDir "dotnet-9.0-$($componentToInstall.ToLower()).exe"
                     $downloadedFiles += $installerPath
                     
                     try {
-                        Write-Host "  Downloading latest .NET 9.0 Desktop Runtime..."
-                        Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
+                        $componentDisplayName = if ($componentToInstall -eq "Desktop") { "Desktop Runtime" } else { "Runtime" }
+                        Write-Host "  Downloading latest .NET 9.0 $componentDisplayName..."
+                        Invoke-WebRequestWithRetry -Uri $url -OutFile $installerPath
                         Write-Host "  Download complete." -ForegroundColor Green
-                        
+
+                        # Validate downloaded file
+                        Write-Host "  Validating downloaded file..." -ForegroundColor Gray
+                        if (-not (Test-DownloadedFile -FilePath $installerPath -MinimumSizeBytes 1048576)) {
+                            Write-Warning "  Downloaded file validation failed. Skipping installation."
+                            continue
+                        }
+                        Write-Host "  Validation successful." -ForegroundColor Green
+
                         if (Test-Path $installerPath) {
                             # Check installer version
                             $installerVersion = Get-InstallerVersion -FilePath $installerPath
                             if ($installerVersion) {
                                 Write-Host "  Downloaded installer version: $installerVersion" -ForegroundColor Gray
                             }
-                            
-                            Write-Host "  Installing .NET 9.0 Desktop Runtime..."
+
+                            Write-Host "  Installing .NET 9.0 $componentDisplayName..."
                             $silentArgs = $SilentArgsMap["NET"]
                             $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
                             
                             switch ($Process.ExitCode) {
-                                0 { 
+                                0 {
                                     Write-Host "  Installation successful." -ForegroundColor Green
+                                    $dotNet9InstalledThisSession = $true
                                 }
-                                3010 { 
+                                3010 {
                                     Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
                                     $RebootRequired = $true
+                                    $dotNet9InstalledThisSession = $true
                                 }
                                 1641 {
                                     Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
                                     $RebootRequired = $true
+                                    $dotNet9InstalledThisSession = $true
                                 }
-                                default { 
+                                default {
                                     Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
                                 }
                             }
@@ -710,8 +899,98 @@ try {
                     }
                 }
                 else {
-                    # For .NET 6.0 LTS and .NET 9.0, keep current behavior
-                    Write-Host "  .NET $($version.Split('-')[1]) is already installed - Skipping" -ForegroundColor Cyan
+                    # For .NET 6.0, 8.0 (LTS) and 9.0, check for patch updates
+                    $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
+
+                    Write-Host "  Checking for .NET $majorVersion.0 patch updates..." -ForegroundColor Gray
+
+                    # Determine which component to download based on what's installed
+                    $componentToInstall = if ($installed.Desktop) {
+                        "Desktop"
+                    } elseif ($installed.AspCore) {
+                        "Runtime"
+                    } else {
+                        "Runtime"
+                    }
+
+                    # Get the latest download URL
+                    $url = Get-DotNetDownloadUrl -MajorVersion $majorVersion -Component $componentToInstall
+
+                    if (-not $url) {
+                        Write-Host "  Could not get download URL. Skipping update check." -ForegroundColor Gray
+                        continue
+                    }
+
+                    # Download to temp location to check version
+                    $tempInstallerPath = Join-Path $TempDir "dotnet-$majorVersion.0-$($componentToInstall.ToLower())-check.exe"
+
+                    try {
+                        Write-Host "  Downloading latest version info..." -ForegroundColor Gray
+                        Invoke-WebRequestWithRetry -Uri $url -OutFile $tempInstallerPath
+
+                        # Validate downloaded file
+                        if (-not (Test-DownloadedFile -FilePath $tempInstallerPath -MinimumSizeBytes 1048576)) {
+                            Write-Warning "  Downloaded file validation failed. Skipping update check."
+                            if (Test-Path $tempInstallerPath) {
+                                Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+                            }
+                            continue
+                        }
+
+                        if (Test-Path $tempInstallerPath) {
+                            # Check installer version
+                            $latestVersion = Get-InstallerVersion -FilePath $tempInstallerPath
+
+                            if ($latestVersion) {
+                                Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
+                                Write-Host "  Current installed version: $currentVersion" -ForegroundColor Gray
+
+                                # Compare versions
+                                if (Compare-Version -CurrentVersion $currentVersion -TargetVersion $latestVersion) {
+                                    Write-Host "  .NET $majorVersion.0 is already up to date - Skipping" -ForegroundColor Cyan
+                                    Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+                                } else {
+                                    Write-Host "  Update available: $currentVersion -> $latestVersion" -ForegroundColor Yellow
+
+                                    # Rename temp file to final installer path
+                                    $installerPath = Join-Path $TempDir "dotnet-$majorVersion.0-$($componentToInstall.ToLower()).exe"
+                                    Move-Item -Path $tempInstallerPath -Destination $installerPath -Force
+                                    $downloadedFiles += $installerPath
+
+                                    $componentDisplayName = if ($componentToInstall -eq "Desktop") { "Desktop Runtime" } else { "Runtime" }
+                                    Write-Host "  Installing .NET $majorVersion.0 $componentDisplayName ($latestVersion)..."
+                                    $silentArgs = $SilentArgsMap["NET"]
+                                    $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
+
+                                    switch ($Process.ExitCode) {
+                                        0 {
+                                            Write-Host "  Installation successful." -ForegroundColor Green
+                                        }
+                                        3010 {
+                                            Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
+                                            $RebootRequired = $true
+                                        }
+                                        1641 {
+                                            Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
+                                            $RebootRequired = $true
+                                        }
+                                        default {
+                                            Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
+                                        }
+                                    }
+                                }
+                            } else {
+                                Write-Host "  Could not determine installer version - Skipping" -ForegroundColor Gray
+                                Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Warning "  Failed to check for updates: $_"
+                        if (Test-Path $tempInstallerPath) {
+                            Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+                        }
+                    }
                 }
             }
             else {
