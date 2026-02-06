@@ -727,6 +727,7 @@ function Get-DotNetDownloadUrl {
                 
                 # Fallback: Try redirect following from thank-you page
                 Write-Verbose "releases.json method failed, trying redirect following..."
+                Write-Host "  Attempting redirect resolution..." -ForegroundColor Gray
                 
                 # Construct the thank-you page URL (these redirect to actual downloads)
                 $thankYouUrl = if ($Component -eq "Desktop") {
@@ -737,31 +738,122 @@ function Get-DotNetDownloadUrl {
                     "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/sdk-$latestVersion-windows-x64-installer"
                 }
                 
-                # Follow redirects using HttpWebRequest (more reliable than Invoke-WebRequest for redirects)
+                Write-Verbose "Thank-you URL: $thankYouUrl"
+                
+                # Try multiple methods to follow redirects
+                $actualUrl = $null
+                
+                # Method 1: Use Invoke-WebRequest with MaximumRedirectionCount
                 try {
-                    $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
-                    $request.Method = "HEAD"
-                    $request.AllowAutoRedirect = $true
-                    $request.Timeout = 15000
-                    $request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                    $response = $request.GetResponse()
-                    $actualUrl = $response.ResponseUri.AbsoluteUri
-                    $response.Close()
+                    Write-Verbose "Trying Invoke-WebRequest with redirects..."
+                    $response = Invoke-WebRequest -Uri $thankYouUrl -UseBasicParsing -MaximumRedirectionCount 10 -ErrorAction Stop
+                    # Try to get final URL from response
+                    if ($response.BaseResponse) {
+                        $actualUrl = $response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+                    }
+                    elseif ($response.Headers.Location) {
+                        $actualUrl = $response.Headers.Location
+                    }
+                    Write-Verbose "Invoke-WebRequest resolved URL: $actualUrl"
+                }
+                catch {
+                    Write-Verbose "Invoke-WebRequest redirect failed: $_"
+                }
+                
+                # Method 2: Use HttpWebRequest if Method 1 didn't work
+                if (-not $actualUrl -or ($actualUrl -notmatch '\.exe$' -and $actualUrl -notmatch 'download\.visualstudio\.microsoft\.com')) {
+                    try {
+                        Write-Verbose "Trying HttpWebRequest redirect..."
+                        $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
+                        $request.Method = "HEAD"
+                        $request.AllowAutoRedirect = $true
+                        $request.Timeout = 20000
+                        $request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                        $request.MaximumAutomaticRedirections = 10
+                        $response = $request.GetResponse()
+                        $actualUrl = $response.ResponseUri.AbsoluteUri
+                        $response.Close()
+                        Write-Verbose "HttpWebRequest resolved URL: $actualUrl"
+                    }
+                    catch {
+                        Write-Verbose "HttpWebRequest redirect failed: $_"
+                    }
+                }
+                
+                # Method 3: Try to get Location header manually
+                if (-not $actualUrl -or ($actualUrl -notmatch '\.exe$' -and $actualUrl -notmatch 'download\.visualstudio\.microsoft\.com')) {
+                    try {
+                        Write-Verbose "Trying manual Location header check..."
+                        $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
+                        $request.Method = "HEAD"
+                        $request.AllowAutoRedirect = $false
+                        $request.Timeout = 20000
+                        $request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                        try {
+                            $response = $request.GetResponse()
+                            $response.Close()
+                        }
+                        catch {
+                            # 302/301 redirect expected
+                            if ($_.Exception.Response) {
+                                $location = $_.Exception.Response.Headers['Location']
+                                if ($location) {
+                                    $actualUrl = $location
+                                    Write-Verbose "Found Location header: $actualUrl"
+                                    # If relative URL, make it absolute
+                                    if ($actualUrl -notmatch '^https?://') {
+                                        $baseUri = New-Object System.Uri($thankYouUrl)
+                                        $actualUrl = New-Object System.Uri($baseUri, $actualUrl).AbsoluteUri
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Manual Location header check failed: $_"
+                    }
+                }
+                
+                if ($actualUrl) {
+                    Write-Verbose "Resolved URL: $actualUrl"
                     
-                    Write-Verbose "Resolved URL via HttpWebRequest: $actualUrl"
-                    
+                    # Check if it's a valid download URL
                     if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
-                        Write-Verbose "Successfully resolved download URL via HttpWebRequest: $actualUrl"
+                        Write-Verbose "Successfully resolved download URL: $actualUrl"
                         Write-Host "  Download URL resolved successfully" -ForegroundColor Green
                         return $actualUrl
                     }
                     else {
                         Write-Verbose "Resolved URL doesn't match expected pattern: $actualUrl"
+                        # If we got a URL but it's not the final download, try following it again
+                        if ($actualUrl -match 'thank-you' -or $actualUrl -match 'dotnet\.microsoft\.com') {
+                            Write-Verbose "Got intermediate redirect, trying to follow further..."
+                            try {
+                                $finalRequest = [System.Net.HttpWebRequest]::Create($actualUrl)
+                                $finalRequest.Method = "HEAD"
+                                $finalRequest.AllowAutoRedirect = $true
+                                $finalRequest.Timeout = 20000
+                                $finalRequest.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                                $finalResponse = $finalRequest.GetResponse()
+                                $finalUrl = $finalResponse.ResponseUri.AbsoluteUri
+                                $finalResponse.Close()
+                                
+                                if ($finalUrl -match '\.exe$' -or $finalUrl -match 'download\.visualstudio\.microsoft\.com') {
+                                    Write-Verbose "Successfully resolved final download URL: $finalUrl"
+                                    Write-Host "  Download URL resolved successfully" -ForegroundColor Green
+                                    return $finalUrl
+                                }
+                            }
+                            catch {
+                                Write-Verbose "Could not follow intermediate redirect: $_"
+                            }
+                        }
+                        Write-Host "  Redirect resolution failed - URL doesn't match expected pattern" -ForegroundColor Yellow
                     }
                 }
-                catch {
-                    Write-Verbose "Could not follow redirect: $_"
-                    Write-Host "  Redirect resolution failed" -ForegroundColor Yellow
+                else {
+                    Write-Verbose "No URL resolved from redirect"
+                    Write-Host "  Redirect resolution failed - no URL returned" -ForegroundColor Yellow
                 }
             }
             else {
