@@ -660,13 +660,40 @@ function Get-DotNetDownloadUrlFromReleases {
         }
         
         if ($file) {
-            $downloadUrl = $file.url -or $file.Url -or $file.downloadUrl -or $file.DownloadUrl
+            # Try all possible URL property names
+            $downloadUrl = $null
+            $possibleUrlProps = @('url', 'Url', 'downloadUrl', 'DownloadUrl', 'download-url', 'href', 'Href', 'link', 'Link')
+            foreach ($prop in $possibleUrlProps) {
+                if ($file.PSObject.Properties.Name -contains $prop) {
+                    $downloadUrl = $file.$prop
+                    Write-Verbose "Found download URL in property '$prop': $downloadUrl"
+                    break
+                }
+            }
+            
             if ($downloadUrl) {
-                Write-Verbose "Found download URL in releases.json: $downloadUrl"
-                return $downloadUrl
+                # Verify the URL is valid by testing HEAD request
+                try {
+                    Write-Verbose "Verifying download URL..."
+                    $headResponse = Invoke-WebRequest -Uri $downloadUrl -Method Head -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                    if ($headResponse.StatusCode -eq 200) {
+                        Write-Verbose "Download URL verified successfully"
+                        return $downloadUrl
+                    }
+                    else {
+                        Write-Verbose "URL verification returned status code: $($headResponse.StatusCode)"
+                    }
+                }
+                catch {
+                    Write-Verbose "URL verification failed: $_"
+                    # Still return the URL even if verification fails - it might work for actual download
+                    return $downloadUrl
+                }
             }
             else {
-                Write-Verbose "File found but no URL property: $(($file | Get-Member -MemberType NoteProperty | Select-Object -First 5).Name -join ', ')"
+                $allProps = ($file | Get-Member -MemberType NoteProperty).Name -join ', '
+                Write-Verbose "File found but no URL property found. Available properties: $allProps"
+                Write-Verbose "File object: $($file | ConvertTo-Json -Depth 2)"
             }
         }
         else {
