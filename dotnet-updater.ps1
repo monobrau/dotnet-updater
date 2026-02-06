@@ -325,6 +325,12 @@ function Get-InstalledDotNetVersions {
         if (-not $dotnetExe) {
             Write-Verbose "dotnet.exe not found in PATH or common locations"
             Write-Host "  DEBUG: dotnet.exe not found. Checked PATH and common installation paths." -ForegroundColor Yellow
+            Write-Host "  DEBUG: Checked paths:" -ForegroundColor Yellow
+            Write-Host "    - PATH: $(if ($dotnetPath) { 'Found' } else { 'Not found' })" -ForegroundColor Yellow
+            foreach ($path in $commonPaths) {
+                $exists = Test-Path $path
+                Write-Host "    - $path : $(if ($exists) { 'Found' } else { 'Not found' })" -ForegroundColor Yellow
+            }
             return @{
                 Runtimes = @()
                 SDKs = @()
@@ -361,7 +367,9 @@ function Get-InstalledDotNetVersions {
         }
         else {
             # Debug output even when verbose is off
-            Write-Host "  DEBUG: No runtimes found. Raw output: $($runtimesOutput -join ' | ')" -ForegroundColor Yellow
+            Write-Host "  DEBUG: No runtimes found after filtering." -ForegroundColor Yellow
+            Write-Host "  DEBUG: Raw dotnet --list-runtimes output ($($runtimesOutput.Count) lines):" -ForegroundColor Yellow
+            $runtimesOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
         }
         if ($sdks.Count -gt 0) {
             Write-Verbose "Sample SDKs: $($sdks[0..([Math]::Min(2, $sdks.Count-1))] -join ', ')"
