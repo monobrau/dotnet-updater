@@ -471,21 +471,36 @@ function Get-DotNetLatestVersion {
 
     try {
         $releasesIndexUrl = "https://github.com/dotnet/core/raw/refs/heads/main/release-notes/releases-index.json"
+        Write-Verbose "Fetching releases-index.json from: $releasesIndexUrl"
         $response = Invoke-WebRequest -Uri $releasesIndexUrl -UseBasicParsing -ErrorAction Stop
         $releasesIndex = $response.Content | ConvertFrom-Json
         
         $channelVersion = "$MajorVersion.0"
+        Write-Verbose "Looking for channel version: $channelVersion"
         $releasesArray = $releasesIndex.'releases-index'
+        
+        if (-not $releasesArray) {
+            Write-Verbose "releases-index property not found in JSON response"
+            return $null
+        }
+        
         $releaseInfo = $releasesArray | Where-Object { $_.'channel-version' -eq $channelVersion } | Select-Object -First 1
         
         if ($releaseInfo) {
-            return $releaseInfo.'latest-runtime'
+            $latestRuntime = $releaseInfo.'latest-runtime'
+            Write-Verbose "Found latest runtime version: $latestRuntime for channel $channelVersion"
+            return $latestRuntime
+        }
+        else {
+            Write-Verbose "No release info found for channel version $channelVersion"
         }
         
         return $null
     }
     catch {
         Write-Verbose "Could not get latest version from releases-index: $_"
+        Write-Verbose "Error type: $($_.Exception.GetType().FullName)"
+        Write-Verbose "Error message: $($_.Exception.Message)"
         return $null
     }
 }
@@ -574,12 +589,15 @@ function Get-DotNetDownloadUrl {
         try {
             $attempt++
             Write-Verbose "Fetching download URL attempt $attempt of $maxRetries"
+            Write-Host "  Attempt $attempt of $maxRetries: Getting download URL for .NET $MajorVersion.0 $Component..." -ForegroundColor Gray
 
             # First, try to get the latest version from the API
             Write-Verbose "Getting latest version for .NET $MajorVersion.0 from Microsoft API..."
+            Write-Host "  Querying Microsoft API for latest version..." -ForegroundColor Gray
             $latestVersion = Get-DotNetLatestVersion -MajorVersion $MajorVersion
             
             if ($latestVersion) {
+                Write-Host "  API returned latest version: $latestVersion" -ForegroundColor Green
                 Write-Verbose "Found latest version: $latestVersion"
                 Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
                 
@@ -639,7 +657,8 @@ function Get-DotNetDownloadUrl {
             }
             else {
                 Write-Verbose "Could not get latest version from API, falling back to HTML scraping"
-                Write-Host "  Could not get latest version from API, using HTML scraping..." -ForegroundColor Yellow
+                Write-Host "  API did not return a version (may be offline or version not found)" -ForegroundColor Yellow
+                Write-Host "  Falling back to HTML scraping method..." -ForegroundColor Gray
             }
             
             # Fallback: Try scraping the download page
