@@ -369,7 +369,7 @@ function Uninstall-DotNetVersion {
         return $false
     }
     catch {
-        Write-Warning "Error uninstalling .NET $Version $Type: $_"
+        Write-Warning "Error uninstalling .NET $Version ${Type}: $_"
         return $false
     }
 }
