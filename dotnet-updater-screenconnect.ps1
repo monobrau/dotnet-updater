@@ -7,7 +7,7 @@
     It downloads the latest version from GitHub and executes it with filtered output.
     
     ScreenConnect One-Liner Command:
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `$ErrorActionPreference='Continue'; `$ProgressPreference='SilentlyContinue'; `$cacheBuster = Get-Date -Format 'yyyyMMddHHmmss'; New-Item -Path 'C:\temp' -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null; try { (New-Object Net.WebClient).DownloadFile(\"https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache=`$cacheBuster\", 'C:\temp\dotnet-updater-sc.ps1'); & 'C:\temp\dotnet-updater-sc.ps1'; exit `$LASTEXITCODE } catch { Write-Host \"ERROR: `$_\" -ForegroundColor Red; exit 1 }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ErrorActionPreference='Continue'; $ProgressPreference='SilentlyContinue'; $cacheBuster = Get-Date -Format 'yyyyMMddHHmmss'; New-Item -Path 'C:\temp' -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null; try { (New-Object Net.WebClient).DownloadFile(\"https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache=$cacheBuster\", 'C:\temp\dotnet-updater-sc.ps1'); & 'C:\temp\dotnet-updater-sc.ps1'; exit $LASTEXITCODE } catch { Write-Host \"ERROR: $_\" -ForegroundColor Red; exit 1 }"
 #>
 
 $ProgressPreference = 'SilentlyContinue'
