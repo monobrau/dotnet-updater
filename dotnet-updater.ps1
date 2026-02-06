@@ -463,7 +463,7 @@ function Test-DownloadedFile {
     }
 }
 
-# Function to get latest version from Microsoft releases-index.json
+# Function to get latest version and download URL from Microsoft releases-index.json
 function Get-DotNetLatestVersion {
     param(
         [int]$MajorVersion
@@ -490,6 +490,63 @@ function Get-DotNetLatestVersion {
     }
 }
 
+# Function to get download URL directly from releases.json
+function Get-DotNetDownloadUrlFromReleases {
+    param(
+        [int]$MajorVersion,
+        [string]$Component = "Desktop",
+        [string]$Version
+    )
+
+    try {
+        $releasesJsonUrl = "https://builds.dotnet.microsoft.com/dotnet/release-metadata/$MajorVersion.0/releases.json"
+        Write-Verbose "Fetching releases.json from: $releasesJsonUrl"
+        $response = Invoke-WebRequest -Uri $releasesJsonUrl -UseBasicParsing -ErrorAction Stop
+        $releases = $response.Content | ConvertFrom-Json
+        
+        # Find the release matching our version
+        $release = $releases.releases | Where-Object { $_.'release-version' -eq $Version } | Select-Object -First 1
+        
+        if ($release) {
+            # Look for Windows x64 installer
+            $files = $release.files
+            if ($Component -eq "Desktop") {
+                $file = $files | Where-Object { 
+                    $_.name -match 'windowsdesktop.*runtime' -and 
+                    $_.rid -eq 'win-x64' -and 
+                    $_.name -match '\.exe$'
+                } | Select-Object -First 1
+            }
+            elseif ($Component -eq "Runtime") {
+                $file = $files | Where-Object { 
+                    $_.name -match 'dotnet.*runtime' -and 
+                    $_.name -notmatch 'desktop' -and
+                    $_.rid -eq 'win-x64' -and 
+                    $_.name -match '\.exe$'
+                } | Select-Object -First 1
+            }
+            else {
+                $file = $files | Where-Object { 
+                    $_.name -match 'dotnet.*sdk' -and 
+                    $_.rid -eq 'win-x64' -and 
+                    $_.name -match '\.exe$'
+                } | Select-Object -First 1
+            }
+            
+            if ($file -and $file.url) {
+                Write-Verbose "Found download URL in releases.json: $($file.url)"
+                return $file.url
+            }
+        }
+        
+        return $null
+    }
+    catch {
+        Write-Verbose "Could not get download URL from releases.json: $_"
+        return $null
+    }
+}
+
 # Function to get download URL for .NET major version
 function Get-DotNetDownloadUrl {
     param(
@@ -507,10 +564,26 @@ function Get-DotNetDownloadUrl {
             Write-Verbose "Fetching download URL attempt $attempt of $maxRetries"
 
             # First, try to get the latest version from the API
+            Write-Verbose "Getting latest version for .NET $MajorVersion.0 from Microsoft API..."
             $latestVersion = Get-DotNetLatestVersion -MajorVersion $MajorVersion
             
             if ($latestVersion) {
                 Write-Verbose "Found latest version: $latestVersion"
+                Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
+                
+                # First, try to get URL directly from releases.json (most reliable)
+                Write-Verbose "Attempting to get download URL from releases.json API..."
+                $directUrl = Get-DotNetDownloadUrlFromReleases -MajorVersion $MajorVersion -Component $Component -Version $latestVersion
+                
+                if ($directUrl) {
+                    Write-Verbose "Successfully got download URL from releases.json: $directUrl"
+                    Write-Host "  Download URL retrieved successfully" -ForegroundColor Green
+                    return $directUrl
+                }
+                
+                # Fallback: Try redirect following from thank-you page
+                Write-Verbose "releases.json method failed, trying redirect following..."
+                Write-Host "  Resolving download URL via redirect..." -ForegroundColor Gray
                 
                 # Construct the thank-you page URL (these redirect to actual downloads)
                 $thankYouUrl = if ($Component -eq "Desktop") {
@@ -521,48 +594,59 @@ function Get-DotNetDownloadUrl {
                     "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/sdk-$latestVersion-windows-x64-installer"
                 }
                 
-                # Follow redirects to get the actual download URL
+                # Follow redirects using HttpWebRequest (more reliable than Invoke-WebRequest for redirects)
                 try {
-                    # Try Invoke-WebRequest first (more reliable)
-                    $response = Invoke-WebRequest -Uri $thankYouUrl -UseBasicParsing -MaximumRedirectionCount 10 -ErrorAction Stop
-                    $actualUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
+                    $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
+                    $request.Method = "HEAD"
+                    $request.AllowAutoRedirect = $true
+                    $request.Timeout = 15000
+                    $request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    $response = $request.GetResponse()
+                    $actualUrl = $response.ResponseUri.AbsoluteUri
+                    $response.Close()
                     
-                    # Verify it's a download URL
+                    Write-Verbose "Resolved URL via HttpWebRequest: $actualUrl"
+                    
                     if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
-                        Write-Verbose "Successfully resolved download URL: $actualUrl"
+                        Write-Verbose "Successfully resolved download URL via HttpWebRequest: $actualUrl"
+                        Write-Host "  Download URL resolved successfully" -ForegroundColor Green
                         return $actualUrl
+                    }
+                    else {
+                        Write-Verbose "Resolved URL doesn't match expected pattern: $actualUrl"
                     }
                 }
                 catch {
-                    Write-Verbose "Could not follow redirect using Invoke-WebRequest: $_"
-                    
-                    # Fallback to HttpWebRequest
-                    try {
-                        $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
-                        $request.Method = "HEAD"
-                        $request.AllowAutoRedirect = $true
-                        $request.Timeout = 15000
-                        $request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                        $response = $request.GetResponse()
-                        $actualUrl = $response.ResponseUri.AbsoluteUri
-                        $response.Close()
-                        
-                        if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
-                            Write-Verbose "Successfully resolved download URL via HttpWebRequest: $actualUrl"
-                            return $actualUrl
-                        }
-                    }
-                    catch {
-                        Write-Verbose "Could not follow redirect using HttpWebRequest: $_"
-                    }
+                    Write-Verbose "Could not follow redirect: $_"
+                    Write-Host "  Redirect resolution failed" -ForegroundColor Yellow
                 }
+            }
+            else {
+                Write-Verbose "Could not get latest version from API, falling back to HTML scraping"
+                Write-Host "  Could not get latest version from API, using HTML scraping..." -ForegroundColor Gray
             }
             
             # Fallback: Try scraping the download page
             Write-Verbose "Falling back to HTML scraping method"
+            Write-Host "  Attempting HTML scraping fallback..." -ForegroundColor Gray
             $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
-            $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing -ErrorAction Stop
-            $content = $response.Content
+            try {
+                $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing -ErrorAction Stop
+                $content = $response.Content
+            }
+            catch {
+                Write-Verbose "Could not fetch download page: $_"
+                if ($attempt -lt $maxRetries) {
+                    Write-Warning "Could not fetch download page. Retrying in $delay seconds..."
+                    Start-Sleep -Seconds $delay
+                    $delay = $delay * 2
+                    continue
+                }
+                else {
+                    Write-Warning "Could not fetch download page after $maxRetries attempts"
+                    return $null
+                }
+            }
 
             # Try multiple patterns to extract download URLs
             $patterns = @()
@@ -600,9 +684,12 @@ function Get-DotNetDownloadUrl {
 
             # Pattern didn't match - log and retry
             if ($attempt -lt $maxRetries) {
-                Write-Warning "Could not extract download URL from page. Retrying in $delay seconds..."
+                Write-Warning "Could not extract download URL from page (attempt $attempt/$maxRetries). Retrying in $delay seconds..."
                 Start-Sleep -Seconds $delay
                 $delay = $delay * 2
+            }
+            else {
+                Write-Warning "All URL extraction methods failed after $maxRetries attempts"
             }
         }
         catch {
