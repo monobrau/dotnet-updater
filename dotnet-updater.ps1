@@ -519,16 +519,43 @@ function Get-DotNetDownloadUrlFromReleases {
         $response = Invoke-WebRequest -Uri $releasesJsonUrl -UseBasicParsing -ErrorAction Stop
         $releases = $response.Content | ConvertFrom-Json
         
-        # Find the release matching our version
-        $release = $releases.releases | Where-Object { $_.'release-version' -eq $Version } | Select-Object -First 1
+        # Find the release matching our version - try different property names
+        $release = $null
+        if ($releases.releases) {
+            $release = $releases.releases | Where-Object { 
+                ($_.'release-version' -eq $Version) -or 
+                ($_.'releaseVersion' -eq $Version) -or
+                ($_.version -eq $Version)
+            } | Select-Object -First 1
+        }
+        elseif ($releases | Get-Member -MemberType NoteProperty | Where-Object { $_.Name -match 'release' }) {
+            # Try to find releases array with different casing
+            $releasesProp = $releases | Get-Member -MemberType NoteProperty | Where-Object { $_.Name -match 'release' } | Select-Object -First 1
+            if ($releasesProp) {
+                $releasesArray = $releases.($releasesProp.Name)
+                $release = $releasesArray | Where-Object { 
+                    ($_.'release-version' -eq $Version) -or 
+                    ($_.'releaseVersion' -eq $Version) -or
+                    ($_.version -eq $Version)
+                } | Select-Object -First 1
+            }
+        }
         
         if (-not $release) {
             Write-Verbose "No release found matching version $Version in releases.json"
+            Write-Verbose "Available releases: $(if ($releases.releases) { ($releases.releases | Select-Object -First 3 | ForEach-Object { $_.'release-version' -or $_.version }) -join ', ' } else { 'none found' })"
             return $null
         }
         
-        # Look for Windows x64 installer
-        $files = $release.files
+        # Look for Windows x64 installer - try different property names
+        $files = $null
+        if ($release.files) {
+            $files = $release.files
+        }
+        elseif ($release.Files) {
+            $files = $release.Files
+        }
+        
         if (-not $files) {
             Write-Verbose "No files found in release $Version"
             return $null
@@ -536,33 +563,40 @@ function Get-DotNetDownloadUrlFromReleases {
         
         if ($Component -eq "Desktop") {
             $file = $files | Where-Object { 
-                $_.name -match 'windowsdesktop.*runtime' -and 
-                $_.rid -eq 'win-x64' -and 
-                $_.name -match '\.exe$'
+                ($_.name -match 'windowsdesktop.*runtime' -or $_.Name -match 'windowsdesktop.*runtime') -and 
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and 
+                ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
             } | Select-Object -First 1
         }
         elseif ($Component -eq "Runtime") {
             $file = $files | Where-Object { 
-                $_.name -match 'dotnet.*runtime' -and 
-                $_.name -notmatch 'desktop' -and
-                $_.rid -eq 'win-x64' -and 
-                $_.name -match '\.exe$'
+                ($_.name -match 'dotnet.*runtime' -or $_.Name -match 'dotnet.*runtime') -and 
+                ($_.name -notmatch 'desktop' -and $_.Name -notmatch 'desktop') -and
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and 
+                ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
             } | Select-Object -First 1
         }
         else {
             $file = $files | Where-Object { 
-                $_.name -match 'dotnet.*sdk' -and 
-                $_.rid -eq 'win-x64' -and 
-                $_.name -match '\.exe$'
+                ($_.name -match 'dotnet.*sdk' -or $_.Name -match 'dotnet.*sdk') -and 
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and 
+                ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
             } | Select-Object -First 1
         }
         
-        if ($file -and $file.url) {
-            Write-Verbose "Found download URL in releases.json: $($file.url)"
-            return $file.url
+        if ($file) {
+            $downloadUrl = $file.url -or $file.Url -or $file.downloadUrl -or $file.DownloadUrl
+            if ($downloadUrl) {
+                Write-Verbose "Found download URL in releases.json: $downloadUrl"
+                return $downloadUrl
+            }
+            else {
+                Write-Verbose "File found but no URL property: $(($file | Get-Member -MemberType NoteProperty | Select-Object -First 5).Name -join ', ')"
+            }
         }
         else {
             Write-Verbose "No matching file found for Component=$Component, RID=win-x64 in release $Version"
+            Write-Verbose "Available files: $(($files | Select-Object -First 3 | ForEach-Object { $_.name -or $_.Name }) -join ', ')"
         }
         
         return $null
@@ -1095,6 +1129,27 @@ try {
                     $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
 
                     Write-Host "  Checking for .NET $majorVersion.0 patch updates..." -ForegroundColor Gray
+
+                    # First, check if we're already on the latest version
+                    Write-Host "  Querying Microsoft API for latest version..." -ForegroundColor Gray
+                    $latestVersion = Get-DotNetLatestVersion -MajorVersion $majorVersion
+                    
+                    if ($latestVersion) {
+                        Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
+                        Write-Host "  Current installed version: $currentVersion" -ForegroundColor Gray
+                        
+                        # Compare versions - if we're already up to date, skip
+                        if (Compare-Version -CurrentVersion $currentVersion -TargetVersion $latestVersion) {
+                            Write-Host "  .NET $majorVersion.0 is already up to date - Skipping" -ForegroundColor Cyan
+                            continue
+                        }
+                        else {
+                            Write-Host "  Update available: $currentVersion -> $latestVersion" -ForegroundColor Yellow
+                        }
+                    }
+                    else {
+                        Write-Host "  Could not determine latest version from API, proceeding with download check..." -ForegroundColor Yellow
+                    }
 
                     # Determine which component to download based on what's installed
                     $componentToInstall = if ($installed.Desktop) {
