@@ -695,8 +695,14 @@ function Get-DotNetDownloadUrlFromReleases {
         
         if (-not $files) {
             Write-Verbose "No files found in release $Version"
+            Write-Host "  DEBUG: No files array found in release $Version" -ForegroundColor Yellow
             return $null
         }
+        
+        Write-Verbose "Found $($files.Count) files in release $Version"
+        # Debug: Show first few file names
+        $sampleFiles = $files | Select-Object -First 3 | ForEach-Object { $_.name -or $_.Name }
+        Write-Verbose "Sample files: $($sampleFiles -join ', ')"
         
         if ($Component -eq "Desktop") {
             $file = $files | Where-Object { 
@@ -757,11 +763,22 @@ function Get-DotNetDownloadUrlFromReleases {
                 $allProps = ($file | Get-Member -MemberType NoteProperty).Name -join ', '
                 Write-Verbose "File found but no URL property found. Available properties: $allProps"
                 Write-Verbose "File object: $($file | ConvertTo-Json -Depth 2)"
+                # Show all file properties for debugging
+                Write-Host "  DEBUG: Found installer file but no URL property. File properties: $allProps" -ForegroundColor Yellow
+                Write-Host "  DEBUG: File name: $($file.name -or $file.Name)" -ForegroundColor Yellow
+                Write-Host "  DEBUG: File RID: $($file.rid -or $file.Rid)" -ForegroundColor Yellow
             }
         }
         else {
             Write-Verbose "No matching file found for Component=$Component, RID=win-x64 in release $Version"
-            Write-Verbose "Available files: $(($files | Select-Object -First 3 | ForEach-Object { $_.name -or $_.Name }) -join ', ')"
+            $availableFiles = ($files | Select-Object -First 5 | ForEach-Object { 
+                $name = $_.name -or $_.Name
+                $rid = $_.rid -or $_.Rid
+                "$name (RID: $rid)"
+            }) -join ', '
+            Write-Verbose "Available files: $availableFiles"
+            Write-Host "  DEBUG: No matching installer found. Component=$Component, RID=win-x64" -ForegroundColor Yellow
+            Write-Host "  DEBUG: Available files (first 5): $availableFiles" -ForegroundColor Yellow
         }
         
         return $null
