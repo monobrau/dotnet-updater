@@ -507,42 +507,54 @@ function Get-DotNetDownloadUrlFromReleases {
         # Find the release matching our version
         $release = $releases.releases | Where-Object { $_.'release-version' -eq $Version } | Select-Object -First 1
         
-        if ($release) {
-            # Look for Windows x64 installer
-            $files = $release.files
-            if ($Component -eq "Desktop") {
-                $file = $files | Where-Object { 
-                    $_.name -match 'windowsdesktop.*runtime' -and 
-                    $_.rid -eq 'win-x64' -and 
-                    $_.name -match '\.exe$'
-                } | Select-Object -First 1
-            }
-            elseif ($Component -eq "Runtime") {
-                $file = $files | Where-Object { 
-                    $_.name -match 'dotnet.*runtime' -and 
-                    $_.name -notmatch 'desktop' -and
-                    $_.rid -eq 'win-x64' -and 
-                    $_.name -match '\.exe$'
-                } | Select-Object -First 1
-            }
-            else {
-                $file = $files | Where-Object { 
-                    $_.name -match 'dotnet.*sdk' -and 
-                    $_.rid -eq 'win-x64' -and 
-                    $_.name -match '\.exe$'
-                } | Select-Object -First 1
-            }
-            
-            if ($file -and $file.url) {
-                Write-Verbose "Found download URL in releases.json: $($file.url)"
-                return $file.url
-            }
+        if (-not $release) {
+            Write-Verbose "No release found matching version $Version in releases.json"
+            return $null
+        }
+        
+        # Look for Windows x64 installer
+        $files = $release.files
+        if (-not $files) {
+            Write-Verbose "No files found in release $Version"
+            return $null
+        }
+        
+        if ($Component -eq "Desktop") {
+            $file = $files | Where-Object { 
+                $_.name -match 'windowsdesktop.*runtime' -and 
+                $_.rid -eq 'win-x64' -and 
+                $_.name -match '\.exe$'
+            } | Select-Object -First 1
+        }
+        elseif ($Component -eq "Runtime") {
+            $file = $files | Where-Object { 
+                $_.name -match 'dotnet.*runtime' -and 
+                $_.name -notmatch 'desktop' -and
+                $_.rid -eq 'win-x64' -and 
+                $_.name -match '\.exe$'
+            } | Select-Object -First 1
+        }
+        else {
+            $file = $files | Where-Object { 
+                $_.name -match 'dotnet.*sdk' -and 
+                $_.rid -eq 'win-x64' -and 
+                $_.name -match '\.exe$'
+            } | Select-Object -First 1
+        }
+        
+        if ($file -and $file.url) {
+            Write-Verbose "Found download URL in releases.json: $($file.url)"
+            return $file.url
+        }
+        else {
+            Write-Verbose "No matching file found for Component=$Component, RID=win-x64 in release $Version"
         }
         
         return $null
     }
     catch {
         Write-Verbose "Could not get download URL from releases.json: $_"
+        Write-Verbose "Error details: $($_.Exception.Message)"
         return $null
     }
 }
@@ -573,6 +585,7 @@ function Get-DotNetDownloadUrl {
                 
                 # First, try to get URL directly from releases.json (most reliable)
                 Write-Verbose "Attempting to get download URL from releases.json API..."
+                Write-Host "  Trying releases.json API method..." -ForegroundColor Gray
                 $directUrl = Get-DotNetDownloadUrlFromReleases -MajorVersion $MajorVersion -Component $Component -Version $latestVersion
                 
                 if ($directUrl) {
@@ -580,10 +593,13 @@ function Get-DotNetDownloadUrl {
                     Write-Host "  Download URL retrieved successfully" -ForegroundColor Green
                     return $directUrl
                 }
+                else {
+                    Write-Verbose "releases.json API method returned no URL"
+                    Write-Host "  releases.json API method failed, trying redirect..." -ForegroundColor Gray
+                }
                 
                 # Fallback: Try redirect following from thank-you page
                 Write-Verbose "releases.json method failed, trying redirect following..."
-                Write-Host "  Resolving download URL via redirect..." -ForegroundColor Gray
                 
                 # Construct the thank-you page URL (these redirect to actual downloads)
                 $thankYouUrl = if ($Component -eq "Desktop") {
@@ -623,7 +639,7 @@ function Get-DotNetDownloadUrl {
             }
             else {
                 Write-Verbose "Could not get latest version from API, falling back to HTML scraping"
-                Write-Host "  Could not get latest version from API, using HTML scraping..." -ForegroundColor Gray
+                Write-Host "  Could not get latest version from API, using HTML scraping..." -ForegroundColor Yellow
             }
             
             # Fallback: Try scraping the download page
