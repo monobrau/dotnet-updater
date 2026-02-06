@@ -51,6 +51,10 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    [switch]$RemoveOldVersions
+)
+
 # Enforce TLS 1.2 for downloads
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -1250,6 +1254,122 @@ try {
     Write-Host ""
     Write-Host "=============================================" -ForegroundColor Cyan
     Write-Host "Update process completed." -ForegroundColor Green
+    
+    # Check if we should remove old versions
+    if ($RemoveOldVersions) {
+        Write-Host ""
+        Write-Host "=============================================" -ForegroundColor Cyan
+        Write-Host "Checking for old .NET versions to remove..." -ForegroundColor Cyan
+        Write-Host "=============================================" -ForegroundColor Cyan
+        Write-Host ""
+        
+        # Check if .NET 9 is installed
+        $dotnetInfo = Get-InstalledDotNetVersions
+        $dotnet9Installed = $false
+        
+        if ($dotnetInfo.Available) {
+            $dotnet9Runtimes = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.NETCore\.App 9\." -or $_ -match "Microsoft\.WindowsDesktop\.App 9\." }
+            if ($dotnet9Runtimes) {
+                $dotnet9Installed = $true
+                Write-Host ".NET 9.0 is installed. Checking for older versions to remove..." -ForegroundColor Green
+                Write-Host ""
+            }
+        }
+        
+        if ($dotnet9Installed) {
+            $versionsToRemove = @()
+            
+            # Check for .NET 6, 7, and 8
+            foreach ($runtime in $dotnetInfo.Runtimes) {
+                if ($runtime -match "Microsoft\.NETCore\.App (6|7|8)\.\d+\.\d+") {
+                    $versionMatch = $runtime -match "Microsoft\.NETCore\.App (\d+\.\d+\.\d+)"
+                    if ($versionMatch) {
+                        $version = $matches[1]
+                        $majorVersion = [int]$version.Split('.')[0]
+                        if ($majorVersion -ge 6 -and $majorVersion -le 8) {
+                            $versionsToRemove += @{
+                                Version = $version
+                                Type = "Runtime"
+                                FullName = $runtime
+                            }
+                        }
+                    }
+                }
+                if ($runtime -match "Microsoft\.WindowsDesktop\.App (6|7|8)\.\d+\.\d+") {
+                    $versionMatch = $runtime -match "Microsoft\.WindowsDesktop\.App (\d+\.\d+\.\d+)"
+                    if ($versionMatch) {
+                        $version = $matches[1]
+                        $majorVersion = [int]$version.Split('.')[0]
+                        if ($majorVersion -ge 6 -and $majorVersion -le 8) {
+                            $versionsToRemove += @{
+                                Version = $version
+                                Type = "Desktop"
+                                FullName = $runtime
+                            }
+                        }
+                    }
+                }
+                if ($runtime -match "Microsoft\.AspNetCore\.App (6|7|8)\.\d+\.\d+") {
+                    $versionMatch = $runtime -match "Microsoft\.AspNetCore\.App (\d+\.\d+\.\d+)"
+                    if ($versionMatch) {
+                        $version = $matches[1]
+                        $majorVersion = [int]$version.Split('.')[0]
+                        if ($majorVersion -ge 6 -and $majorVersion -le 8) {
+                            $versionsToRemove += @{
+                                Version = $version
+                                Type = "AspCore"
+                                FullName = $runtime
+                            }
+                        }
+                    }
+                }
+            }
+            
+            # Check for SDKs
+            foreach ($sdk in $dotnetInfo.SDKs) {
+                if ($sdk -match "^([678])\.\d+\.\d+") {
+                    $versionMatch = $sdk -match "^(\d+\.\d+\.\d+)"
+                    if ($versionMatch) {
+                        $version = $matches[1]
+                        $versionsToRemove += @{
+                            Version = $version
+                            Type = "SDK"
+                            FullName = $sdk
+                        }
+                    }
+                }
+            }
+            
+            if ($versionsToRemove.Count -gt 0) {
+                Write-Host "Found $($versionsToRemove.Count) older .NET version(s) to remove:" -ForegroundColor Yellow
+                foreach ($item in $versionsToRemove) {
+                    Write-Host "  - $($item.FullName)" -ForegroundColor Gray
+                }
+                Write-Host ""
+                
+                $removedCount = 0
+                foreach ($item in $versionsToRemove) {
+                    Write-Host "Removing $($item.Type) $($item.Version)..." -ForegroundColor Yellow
+                    if (Uninstall-DotNetVersion -Version $item.Version -Type $item.Type) {
+                        $removedCount++
+                    }
+                    Write-Host ""
+                }
+                
+                Write-Host "Removed $removedCount of $($versionsToRemove.Count) older .NET version(s)." -ForegroundColor $(if ($removedCount -eq $versionsToRemove.Count) { "Green" } else { "Yellow" })
+            }
+            else {
+                Write-Host "No older .NET versions (6, 7, or 8) found to remove." -ForegroundColor Green
+            }
+        }
+        else {
+            Write-Host ".NET 9.0 is not installed. Skipping removal of older versions." -ForegroundColor Yellow
+            Write-Host "Note: Only removing older versions when .NET 9.0 is present." -ForegroundColor Gray
+        }
+        
+        Write-Host ""
+        Write-Host "=============================================" -ForegroundColor Cyan
+    }
     
     if ($RebootRequired) {
         Write-Host ""
