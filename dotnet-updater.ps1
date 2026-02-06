@@ -463,30 +463,29 @@ function Test-DownloadedFile {
     }
 }
 
-# Function to get the latest .NET 9.0 download URLs
-function Get-DotNet9DownloadUrls {
+# Function to get latest version from Microsoft releases-index.json
+function Get-DotNetLatestVersion {
+    param(
+        [int]$MajorVersion
+    )
+
     try {
-        # Get download URL from Microsoft download page
-        $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/9.0"
-        $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing
-        $content = $response.Content
+        $releasesIndexUrl = "https://github.com/dotnet/core/raw/refs/heads/main/release-notes/releases-index.json"
+        $response = Invoke-WebRequest -Uri $releasesIndexUrl -UseBasicParsing -ErrorAction Stop
+        $releasesIndex = $response.Content | ConvertFrom-Json
         
-        # Extract the direct download URL for Desktop Runtime (x64)
-        # The URL pattern is: href="https://download.visualstudio.microsoft.com/download/pr/.../windowsdesktop-runtime-9.x.x-win-x64.exe"
-        if ($content -match 'https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/windowsdesktop-runtime-9\.\d+\.\d+-win-x64\.exe') {
-            $desktopUrl = $matches[0] -replace 'href="', '' -replace '"', ''
-            return @{
-                Runtime = $desktopUrl
-                Desktop = $desktopUrl
-                SDK = $desktopUrl
-            }
+        $channelVersion = "$MajorVersion.0"
+        $releasesArray = $releasesIndex.'releases-index'
+        $releaseInfo = $releasesArray | Where-Object { $_.'channel-version' -eq $channelVersion } | Select-Object -First 1
+        
+        if ($releaseInfo) {
+            return $releaseInfo.'latest-runtime'
         }
         
-        Write-Warning "Could not extract download URL from Microsoft page"
         return $null
     }
     catch {
-        Write-Warning "Could not get .NET 9.0 download URLs: $_"
+        Write-Verbose "Could not get latest version from releases-index: $_"
         return $null
     }
 }
@@ -505,25 +504,82 @@ function Get-DotNetDownloadUrl {
     while ($attempt -lt $maxRetries) {
         try {
             $attempt++
-            Write-Verbose "Fetching download page attempt $attempt of $maxRetries"
+            Write-Verbose "Fetching download URL attempt $attempt of $maxRetries"
 
-            # Get download page
+            # First, try to get the latest version from the API
+            $latestVersion = Get-DotNetLatestVersion -MajorVersion $MajorVersion
+            
+            if ($latestVersion) {
+                Write-Verbose "Found latest version: $latestVersion"
+                
+                # Construct the thank-you page URL (these redirect to actual downloads)
+                $thankYouUrl = if ($Component -eq "Desktop") {
+                    "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-desktop-$latestVersion-windows-x64-installer"
+                } elseif ($Component -eq "Runtime") {
+                    "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-$latestVersion-windows-x64-installer"
+                } else {
+                    "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/sdk-$latestVersion-windows-x64-installer"
+                }
+                
+                # Follow redirects to get the actual download URL
+                try {
+                    $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
+                    $request.Method = "HEAD"
+                    $request.AllowAutoRedirect = $true
+                    $request.Timeout = 10000
+                    $response = $request.GetResponse()
+                    $actualUrl = $response.ResponseUri.AbsoluteUri
+                    $response.Close()
+                    
+                    # Verify it's a download URL
+                    if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
+                        Write-Verbose "Successfully resolved download URL: $actualUrl"
+                        return $actualUrl
+                    }
+                }
+                catch {
+                    Write-Verbose "Could not follow redirect: $_"
+                }
+            }
+            
+            # Fallback: Try scraping the download page
+            Write-Verbose "Falling back to HTML scraping method"
             $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
             $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing -ErrorAction Stop
             $content = $response.Content
 
-            # Extract the direct download URL
-            $pattern = if ($Component -eq "Desktop") {
-                'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/windowsdesktop-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
+            # Try multiple patterns to extract download URLs
+            $patterns = @()
+            if ($Component -eq "Desktop") {
+                $patterns = @(
+                    'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^"]+windowsdesktop-runtime-[^"]+win-x64\.exe)"'
+                    'href="(https://[^"]+windowsdesktop-runtime-[^"]+win-x64\.exe)"'
+                    'data-installer-url="([^"]+windowsdesktop-runtime-[^"]+win-x64\.exe)"'
+                )
             } elseif ($Component -eq "Runtime") {
-                'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-runtime-\d+\.\d+\.\d+-win-x64\.exe)"'
+                $patterns = @(
+                    'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^"]+dotnet-runtime-[^"]+win-x64\.exe)"'
+                    'href="(https://[^"]+dotnet-runtime-[^"]+win-x64\.exe)"'
+                    'data-installer-url="([^"]+dotnet-runtime-[^"]+win-x64\.exe)"'
+                )
             } else {
-                'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^/]+/dotnet-sdk-\d+\.\d+\.\d+-win-x64\.exe)"'
+                $patterns = @(
+                    'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^"]+dotnet-sdk-[^"]+win-x64\.exe)"'
+                    'href="(https://[^"]+dotnet-sdk-[^"]+win-x64\.exe)"'
+                    'data-installer-url="([^"]+dotnet-sdk-[^"]+win-x64\.exe)"'
+                )
             }
 
-            if ($content -match $pattern) {
-                Write-Verbose "Successfully extracted download URL on attempt $attempt"
-                return $matches[1]
+            foreach ($pattern in $patterns) {
+                if ($content -match $pattern) {
+                    $url = $matches[1]
+                    # Clean up the URL (remove any trailing quotes or parameters)
+                    if ($url -match '^(.+?)(["'']|[\?&]).*$') {
+                        $url = $matches[1]
+                    }
+                    Write-Verbose "Successfully extracted download URL using pattern: $url"
+                    return $url
+                }
             }
 
             # Pattern didn't match - log and retry
@@ -580,8 +636,6 @@ if ($releaseValue) {
 
     # Check if there's a newer Framework version available
     if ($currentFrameworkVersion) {
-        $currentMinRelease = $DotNetVersions[$currentFrameworkVersion].MinRelease
-
         # Find the highest Framework version available
         $newerVersions = $DotNetVersions.Keys | Where-Object {
             $DotNetVersions[$_].IsFramework -and $DotNetVersions[$_].MinRelease -gt $releaseValue
