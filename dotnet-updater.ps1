@@ -312,10 +312,27 @@ function Get-InstalledDotNetVersions {
         $sdksOutput = & dotnet --list-sdks 2>&1
         
         # Filter out error messages and get only successful output
-        $runtimes = $runtimesOutput | Where-Object { $_ -is [string] -and $_ -match "Microsoft\." }
-        $sdks = $sdksOutput | Where-Object { $_ -is [string] -and $_ -match "^\d+\.\d+\.\d+" }
+        # Convert all output to strings first, then filter
+        $runtimes = @()
+        foreach ($line in $runtimesOutput) {
+            $lineStr = $line.ToString()
+            if ($lineStr -match "Microsoft\.") {
+                $runtimes += $lineStr
+            }
+        }
+        
+        $sdks = @()
+        foreach ($line in $sdksOutput) {
+            $lineStr = $line.ToString()
+            if ($lineStr -match "^\d+\.\d+\.\d+") {
+                $sdks += $lineStr
+            }
+        }
         
         Write-Verbose "Found $($runtimes.Count) runtimes and $($sdks.Count) SDKs"
+        if ($runtimes.Count -gt 0) {
+            Write-Verbose "Sample runtimes: $($runtimes[0..([Math]::Min(2, $runtimes.Count-1))] -join ', ')"
+        }
         
         return @{
             Runtimes = $runtimes
