@@ -283,6 +283,17 @@ function Get-DotNetFrameworkVersion {
 }
 
 # Function to check installed .NET versions using dotnet command
+# Helper function to add cache-busting parameter to URLs
+function Add-CacheBuster {
+    param(
+        [string]$Url
+    )
+    
+    $separator = if ($Url -match '\?') { '&' } else { '?' }
+    $cacheBuster = Get-Date -Format 'yyyyMMddHHmmss'
+    return "$Url${separator}nocache=$cacheBuster"
+}
+
 function Get-InstalledDotNetVersions {
     try {
         # Check if dotnet command exists
@@ -481,8 +492,11 @@ function Invoke-WebRequestWithRetry {
         try {
             $attempt++
             Write-Verbose "Download attempt $attempt of $MaxRetries for $Uri"
+            
+            # Add cache-busting to ensure fresh download
+            $downloadUri = Add-CacheBuster -Url $Uri
 
-            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $downloadUri -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
             Write-Verbose "Download successful on attempt $attempt"
             return $true
         }
@@ -565,6 +579,7 @@ function Get-DotNetLatestVersion {
 
     try {
         $releasesIndexUrl = "https://github.com/dotnet/core/raw/refs/heads/main/release-notes/releases-index.json"
+        $releasesIndexUrl = Add-CacheBuster -Url $releasesIndexUrl
         Write-Verbose "Fetching releases-index.json from: $releasesIndexUrl"
         $response = Invoke-WebRequest -Uri $releasesIndexUrl -UseBasicParsing -ErrorAction Stop
         $releasesIndex = $response.Content | ConvertFrom-Json
@@ -609,6 +624,7 @@ function Get-DotNetDownloadUrlFromReleases {
 
     try {
         $releasesJsonUrl = "https://builds.dotnet.microsoft.com/dotnet/release-metadata/$MajorVersion.0/releases.json"
+        $releasesJsonUrl = Add-CacheBuster -Url $releasesJsonUrl
         Write-Verbose "Fetching releases.json from: $releasesJsonUrl"
         $response = Invoke-WebRequest -Uri $releasesJsonUrl -UseBasicParsing -ErrorAction Stop
         $releases = $response.Content | ConvertFrom-Json
@@ -694,7 +710,8 @@ function Get-DotNetDownloadUrlFromReleases {
                 # Verify the URL is valid by testing HEAD request
                 try {
                     Write-Verbose "Verifying download URL..."
-                    $headResponse = Invoke-WebRequest -Uri $downloadUrl -Method Head -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                    $verifyUrl = Add-CacheBuster -Url $downloadUrl
+                    $headResponse = Invoke-WebRequest -Uri $verifyUrl -Method Head -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
                     if ($headResponse.StatusCode -eq 200) {
                         Write-Verbose "Download URL verified successfully"
                         return $downloadUrl
@@ -785,6 +802,9 @@ function Get-DotNetDownloadUrl {
                 }
                 
                 Write-Verbose "Thank-you URL: $thankYouUrl"
+                
+                # Add cache-busting to thank-you URL
+                $thankYouUrl = Add-CacheBuster -Url $thankYouUrl
                 
                 # Try multiple methods to follow redirects
                 $actualUrl = $null
@@ -913,6 +933,7 @@ function Get-DotNetDownloadUrl {
             Write-Host "  Attempting HTML scraping fallback..." -ForegroundColor Gray
             $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
             try {
+                $downloadPage = Add-CacheBuster -Url $downloadPage
                 $response = Invoke-WebRequest -Uri $downloadPage -UseBasicParsing -ErrorAction Stop
                 $content = $response.Content
             }
