@@ -589,7 +589,7 @@ function Get-DotNetDownloadUrl {
         try {
             $attempt++
             Write-Verbose "Fetching download URL attempt $attempt of $maxRetries"
-            Write-Host "  Attempt $attempt of $maxRetries: Getting download URL for .NET $MajorVersion.0 $Component..." -ForegroundColor Gray
+            Write-Host "  Attempt ${attempt} of ${maxRetries}: Getting download URL for .NET ${MajorVersion}.0 ${Component}..." -ForegroundColor Gray
 
             # First, try to get the latest version from the API
             Write-Verbose "Getting latest version for .NET $MajorVersion.0 from Microsoft API..."
