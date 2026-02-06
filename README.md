@@ -9,6 +9,7 @@ A comprehensive PowerShell script that automatically updates .NET Runtime, Deskt
 - **Version Support** - .NET 6, 7, 8, 9 and .NET Framework 4.8.1
 - **Smart Updates** - Only downloads and installs what's needed
 - **LTS Patch Management** - .NET 6 and 8 receive patch updates automatically
+- **Cleanup Option** - Remove older .NET versions (6, 7, 8) when .NET 9 is installed
 - **Silent Operation** - Runs without user interaction
 - **RMM/ScreenConnect Compatible** - Multiple output modes for automation tools
 - **Architecture Support** - Handles both x64 and x86 installations
@@ -55,6 +56,9 @@ Compact output specifically formatted for ConnectWise ScreenConnect commands.
 ```powershell
 # Run the main script
 .\dotnet-updater.ps1
+
+# Remove old .NET versions (6, 7, 8) when .NET 9 is installed
+.\dotnet-updater.ps1 -RemoveOldVersions
 ```
 
 ### ScreenConnect Command (Recommended)
@@ -133,6 +137,26 @@ New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinu
 ### .NET 9.0 (Current)
 - Receives **patch updates** within the 9.x branch
 - Example: 9.0.0 → 9.0.1 (latest patch)
+
+## Cleanup Old Versions
+
+Use the `-RemoveOldVersions` flag to automatically remove older .NET versions (6, 7, 8) when .NET 9.0 is installed:
+
+```powershell
+.\dotnet-updater.ps1 -RemoveOldVersions
+```
+
+**Behavior:**
+- Only removes versions if .NET 9.0 is installed
+- Removes .NET 6.0, 7.0, and 8.0 runtimes and SDKs
+- Uses Windows Installer to safely uninstall
+- Shows what will be removed before proceeding
+- Skips removal if .NET 9.0 is not present
+
+**Use Cases:**
+- Free up disk space after upgrading to .NET 9
+- Reduce maintenance overhead
+- Clean up development machines
 
 ## Runtime Types
 
