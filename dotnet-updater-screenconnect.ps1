@@ -1,6 +1,13 @@
 <#
 .SYNOPSIS
-    .NET updater for ScreenConnect - Compact output
+    .NET updater for ScreenConnect - Compact output and command-friendly
+    
+.DESCRIPTION
+    This script can be run directly from ScreenConnect's command interface.
+    It downloads the latest version from GitHub and executes it with filtered output.
+    
+    ScreenConnect One-Liner Command:
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ErrorActionPreference='Continue'; $ProgressPreference='SilentlyContinue'; New-Item -Path 'C:\temp' -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null; try { (New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1', 'C:\temp\dotnet-updater-sc.ps1'); & 'C:\temp\dotnet-updater-sc.ps1'; exit $LASTEXITCODE } catch { Write-Host \"ERROR: $_\" -ForegroundColor Red; exit 1 }"
 #>
 
 $ProgressPreference = 'SilentlyContinue'
@@ -10,6 +17,21 @@ $ErrorActionPreference = 'Continue'
 $scriptPath = "C:\temp\dotnet-updater.ps1"
 if (-not (Test-Path $scriptPath)) {
     $scriptPath = Join-Path $PSScriptRoot "dotnet-updater.ps1"
+}
+
+# If script doesn't exist locally, download it
+if (-not (Test-Path $scriptPath)) {
+    try {
+        Write-Host "Downloading latest script from GitHub..." -ForegroundColor Yellow
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $scriptPath = "C:\temp\dotnet-updater.ps1"
+        (New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1', $scriptPath)
+        Write-Host "Download complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "ERROR: Could not download script: $_" -ForegroundColor Red
+        exit 1
+    }
 }
 
 if (-not (Test-Path $scriptPath)) {
