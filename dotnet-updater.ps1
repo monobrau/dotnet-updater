@@ -333,6 +333,16 @@ function Get-InstalledDotNetVersions {
         if ($runtimes.Count -gt 0) {
             Write-Verbose "Sample runtimes: $($runtimes[0..([Math]::Min(2, $runtimes.Count-1))] -join ', ')"
         }
+        else {
+            # Debug output even when verbose is off
+            Write-Host "  DEBUG: No runtimes found. Raw output: $($runtimesOutput -join ' | ')" -ForegroundColor Yellow
+        }
+        if ($sdks.Count -gt 0) {
+            Write-Verbose "Sample SDKs: $($sdks[0..([Math]::Min(2, $sdks.Count-1))] -join ', ')"
+        }
+        else {
+            Write-Host "  DEBUG: No SDKs found. Raw output: $($sdksOutput -join ' | ')" -ForegroundColor Yellow
+        }
         
         return @{
             Runtimes = $runtimes
@@ -1094,6 +1104,16 @@ $dotnetInfo = Get-InstalledDotNetVersions
 if ($dotnetInfo.Available) {
     Write-Verbose "Checking for installed .NET versions. Found $($dotnetInfo.Runtimes.Count) runtimes and $($dotnetInfo.SDKs.Count) SDKs"
     
+    # Debug: Show what we found
+    if ($dotnetInfo.Runtimes.Count -eq 0 -and $dotnetInfo.SDKs.Count -eq 0) {
+        Write-Host "  DEBUG: dotnet command returned no runtimes or SDKs" -ForegroundColor Yellow
+        Write-Host "  DEBUG: This might indicate dotnet is not in PATH or no .NET versions are installed" -ForegroundColor Yellow
+    }
+    else {
+        Write-Verbose "Sample runtime output: $($dotnetInfo.Runtimes[0..([Math]::Min(2, $dotnetInfo.Runtimes.Count-1))] -join ' | ')"
+        Write-Verbose "Sample SDK output: $($dotnetInfo.SDKs[0..([Math]::Min(2, $dotnetInfo.SDKs.Count-1))] -join ' | ')"
+    }
+    
     foreach ($version in $DotNetVersions.Keys | Where-Object { -not $DotNetVersions[$_].IsFramework } | Sort-Object) {
         $netInfo = $DotNetVersions[$version]
         $majorVersion = $version.Split('-')[1].Split('.')[0]
@@ -1131,7 +1151,8 @@ if ($dotnetInfo.Available) {
     }
 }
 else {
-    Write-Verbose "dotnet command not available or failed"
+    Write-Host "  DEBUG: dotnet command not available or failed" -ForegroundColor Yellow
+    Write-Host "  DEBUG: Check if dotnet is installed and in PATH" -ForegroundColor Yellow
 }
 
 Write-Host ""
