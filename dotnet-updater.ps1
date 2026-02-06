@@ -285,8 +285,26 @@ function Get-DotNetFrameworkVersion {
 # Function to check installed .NET versions using dotnet command
 function Get-InstalledDotNetVersions {
     try {
-        $runtimes = & dotnet --list-runtimes 2>$null
-        $sdks = & dotnet --list-sdks 2>$null
+        # Check if dotnet command exists
+        $dotnetPath = Get-Command dotnet -ErrorAction SilentlyContinue
+        if (-not $dotnetPath) {
+            Write-Verbose "dotnet command not found in PATH"
+            return @{
+                Runtimes = @()
+                SDKs = @()
+                Available = $false
+            }
+        }
+        
+        # Get runtimes and SDKs, capturing both stdout and stderr
+        $runtimesOutput = & dotnet --list-runtimes 2>&1
+        $sdksOutput = & dotnet --list-sdks 2>&1
+        
+        # Filter out error messages and get only successful output
+        $runtimes = $runtimesOutput | Where-Object { $_ -is [string] -and $_ -match "Microsoft\." }
+        $sdks = $sdksOutput | Where-Object { $_ -is [string] -and $_ -match "^\d+\.\d+\.\d+" }
+        
+        Write-Verbose "Found $($runtimes.Count) runtimes and $($sdks.Count) SDKs"
         
         return @{
             Runtimes = $runtimes
@@ -295,6 +313,7 @@ function Get-InstalledDotNetVersions {
         }
     }
     catch {
+        Write-Verbose "Error getting .NET versions: $_"
         return @{
             Runtimes = @()
             SDKs = @()
@@ -1035,15 +1054,29 @@ Write-Host "Checking .NET (Core/5+) versions..." -ForegroundColor Gray
 $dotnetInfo = Get-InstalledDotNetVersions
 
 if ($dotnetInfo.Available) {
+    Write-Verbose "Checking for installed .NET versions. Found $($dotnetInfo.Runtimes.Count) runtimes and $($dotnetInfo.SDKs.Count) SDKs"
+    
     foreach ($version in $DotNetVersions.Keys | Where-Object { -not $DotNetVersions[$_].IsFramework } | Sort-Object) {
         $netInfo = $DotNetVersions[$version]
         $majorVersion = $version.Split('-')[1].Split('.')[0]
         
-        # Check for runtime installations
-        $runtimeMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.NETCore\.App $majorVersion\." }
-        $desktopMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.WindowsDesktop\.App $majorVersion\." }
-        $aspCoreMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.AspNetCore\.App $majorVersion\." }
-        $sdkMatch = $dotnetInfo.SDKs | Where-Object { $_ -match "^$majorVersion\." }
+        Write-Verbose "Checking for .NET $majorVersion.x installations..."
+        
+        # Check for runtime installations - escape the major version for regex
+        $runtimePattern = "Microsoft\.NETCore\.App $([regex]::Escape($majorVersion))\."
+        $desktopPattern = "Microsoft\.WindowsDesktop\.App $([regex]::Escape($majorVersion))\."
+        $aspCorePattern = "Microsoft\.AspNetCore\.App $([regex]::Escape($majorVersion))\."
+        $sdkPattern = "^$([regex]::Escape($majorVersion))\."
+        
+        $runtimeMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match $runtimePattern }
+        $desktopMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match $desktopPattern }
+        $aspCoreMatch = $dotnetInfo.Runtimes | Where-Object { $_ -match $aspCorePattern }
+        $sdkMatch = $dotnetInfo.SDKs | Where-Object { $_ -match $sdkPattern }
+        
+        Write-Verbose "  Runtime matches: $($runtimeMatch.Count)"
+        Write-Verbose "  Desktop matches: $($desktopMatch.Count)"
+        Write-Verbose "  ASP.NET Core matches: $($aspCoreMatch.Count)"
+        Write-Verbose "  SDK matches: $($sdkMatch.Count)"
         
         if ($runtimeMatch -or $desktopMatch -or $aspCoreMatch -or $sdkMatch) {
             $installedVersions[$version] = @{
@@ -1055,8 +1088,12 @@ if ($dotnetInfo.Available) {
                 IsFramework = $false
             }
             $updateCount++
+            Write-Verbose "  Found .NET $majorVersion.x installation"
         }
     }
+}
+else {
+    Write-Verbose "dotnet command not available or failed"
 }
 
 Write-Host ""
