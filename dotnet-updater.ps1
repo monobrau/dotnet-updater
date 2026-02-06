@@ -523,13 +523,9 @@ function Get-DotNetDownloadUrl {
                 
                 # Follow redirects to get the actual download URL
                 try {
-                    $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
-                    $request.Method = "HEAD"
-                    $request.AllowAutoRedirect = $true
-                    $request.Timeout = 10000
-                    $response = $request.GetResponse()
-                    $actualUrl = $response.ResponseUri.AbsoluteUri
-                    $response.Close()
+                    # Try Invoke-WebRequest first (more reliable)
+                    $response = Invoke-WebRequest -Uri $thankYouUrl -UseBasicParsing -MaximumRedirectionCount 10 -ErrorAction Stop
+                    $actualUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
                     
                     # Verify it's a download URL
                     if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
@@ -538,7 +534,27 @@ function Get-DotNetDownloadUrl {
                     }
                 }
                 catch {
-                    Write-Verbose "Could not follow redirect: $_"
+                    Write-Verbose "Could not follow redirect using Invoke-WebRequest: $_"
+                    
+                    # Fallback to HttpWebRequest
+                    try {
+                        $request = [System.Net.HttpWebRequest]::Create($thankYouUrl)
+                        $request.Method = "HEAD"
+                        $request.AllowAutoRedirect = $true
+                        $request.Timeout = 15000
+                        $request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                        $response = $request.GetResponse()
+                        $actualUrl = $response.ResponseUri.AbsoluteUri
+                        $response.Close()
+                        
+                        if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
+                            Write-Verbose "Successfully resolved download URL via HttpWebRequest: $actualUrl"
+                            return $actualUrl
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Could not follow redirect using HttpWebRequest: $_"
+                    }
                 }
             }
             
