@@ -303,6 +303,77 @@ function Get-InstalledDotNetVersions {
     }
 }
 
+# Function to uninstall .NET runtime or SDK
+function Uninstall-DotNetVersion {
+    param(
+        [string]$Version,
+        [string]$Type  # "Runtime", "Desktop", "AspCore", or "SDK"
+    )
+
+    try {
+        Write-Verbose "Attempting to uninstall .NET $Version $Type"
+        
+        # Use Windows Installer to find and uninstall .NET versions
+        $uninstallerFound = $false
+        
+        # Use Get-CimInstance to find installed .NET versions (preferred method)
+        try {
+            $products = Get-CimInstance -ClassName Win32_Product -Filter "Name LIKE '%Microsoft .NET%$Version%'" -ErrorAction SilentlyContinue
+            foreach ($product in $products) {
+                if ($product.Name -match "\.NET.*$Version") {
+                    Write-Host "  Found installer: $($product.Name)" -ForegroundColor Gray
+                    $uninstallerFound = $true
+                    Write-Host "  Uninstalling $($product.Name)..." -ForegroundColor Yellow
+                    $result = Invoke-CimMethod -InputObject $product -MethodName Uninstall
+                    if ($result.ReturnValue -eq 0) {
+                        Write-Host "  Successfully uninstalled: $($product.Name)" -ForegroundColor Green
+                        return $true
+                    }
+                    else {
+                        Write-Warning "  Uninstall returned code: $($result.ReturnValue)"
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Verbose "Could not query CIM for uninstallers: $_"
+            # Fallback to WMI
+            try {
+                $products = Get-WmiObject -Class Win32_Product -Filter "Name LIKE '%Microsoft .NET%$Version%'" -ErrorAction SilentlyContinue
+                foreach ($product in $products) {
+                    if ($product.Name -match "\.NET.*$Version") {
+                        Write-Host "  Found installer: $($product.Name)" -ForegroundColor Gray
+                        $uninstallerFound = $true
+                        Write-Host "  Uninstalling $($product.Name)..." -ForegroundColor Yellow
+                        $result = $product.Uninstall()
+                        if ($result.ReturnValue -eq 0) {
+                            Write-Host "  Successfully uninstalled: $($product.Name)" -ForegroundColor Green
+                            return $true
+                        }
+                        else {
+                            Write-Warning "  Uninstall returned code: $($result.ReturnValue)"
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-Verbose "Could not query WMI for uninstallers: $_"
+            }
+        }
+        
+        if (-not $uninstallerFound) {
+            Write-Host "  Warning: Could not find Windows Installer entry for $Version $Type" -ForegroundColor Yellow
+            Write-Host "  You may need to uninstall manually via Control Panel > Programs and Features" -ForegroundColor Yellow
+        }
+        
+        return $false
+    }
+    catch {
+        Write-Warning "Error uninstalling .NET $Version $Type: $_"
+        return $false
+    }
+}
+
 # Function to compare version numbers
 function Compare-Version {
     param(
