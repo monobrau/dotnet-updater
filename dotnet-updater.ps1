@@ -296,10 +296,35 @@ function Add-CacheBuster {
 
 function Get-InstalledDotNetVersions {
     try {
-        # Check if dotnet command exists
+        # Try to find dotnet.exe - check PATH first, then common installation locations
+        $dotnetExe = $null
+        
+        # First, try PATH
         $dotnetPath = Get-Command dotnet -ErrorAction SilentlyContinue
-        if (-not $dotnetPath) {
-            Write-Verbose "dotnet command not found in PATH"
+        if ($dotnetPath) {
+            $dotnetExe = $dotnetPath.Source
+            Write-Verbose "Found dotnet in PATH: $dotnetExe"
+        }
+        else {
+            # Try common installation paths
+            $commonPaths = @(
+                "${env:ProgramFiles}\dotnet\dotnet.exe",
+                "${env:ProgramFiles(x86)}\dotnet\dotnet.exe",
+                "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"
+            )
+            
+            foreach ($path in $commonPaths) {
+                if (Test-Path $path) {
+                    $dotnetExe = $path
+                    Write-Verbose "Found dotnet at: $dotnetExe"
+                    break
+                }
+            }
+        }
+        
+        if (-not $dotnetExe) {
+            Write-Verbose "dotnet.exe not found in PATH or common locations"
+            Write-Host "  DEBUG: dotnet.exe not found. Checked PATH and common installation paths." -ForegroundColor Yellow
             return @{
                 Runtimes = @()
                 SDKs = @()
@@ -308,8 +333,9 @@ function Get-InstalledDotNetVersions {
         }
         
         # Get runtimes and SDKs, capturing both stdout and stderr
-        $runtimesOutput = & dotnet --list-runtimes 2>&1
-        $sdksOutput = & dotnet --list-sdks 2>&1
+        Write-Verbose "Using dotnet.exe at: $dotnetExe"
+        $runtimesOutput = & $dotnetExe --list-runtimes 2>&1
+        $sdksOutput = & $dotnetExe --list-sdks 2>&1
         
         # Filter out error messages and get only successful output
         # Convert all output to strings first, then filter
