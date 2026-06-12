@@ -51,6 +51,10 @@ param(
     [switch]$DryRun
 )
 
+if (-not $DryRun -and $env:DOTNET_UPDATER_DRYRUN -eq '1') {
+    $DryRun = $true
+}
+
 function Write-Status {
     param(
         [string]$Message,
@@ -66,6 +70,9 @@ function Write-Status {
 
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ".NET Framework & .NET Updater" -ForegroundColor Cyan
+if ($DryRun) {
+    Write-Host "Mode: DRY RUN (no downloads or installs)" -ForegroundColor Cyan
+}
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -1852,7 +1859,7 @@ try {
         
         if ($installed.IsFramework) {
             if ($installed.PendingReboot) {
-                Write-Host "[$currentUpdate/$($installedVersions.Count)] .NET Framework $($netInfo.TargetVersion) pending reboot - Skipping" -ForegroundColor Yellow
+                Write-Host "($currentUpdate of $($installedVersions.Count)) .NET Framework $($netInfo.TargetVersion) pending reboot - Skipping" -ForegroundColor Yellow
                 Write-Host "  Restart the computer to complete the Framework update." -ForegroundColor Gray
                 continue
             }
@@ -1861,7 +1868,7 @@ try {
                 continue
             }
 
-            Write-Host "[$currentUpdate/$($installedVersions.Count)] Updating .NET Framework $($installed.CurrentVersion) to $($netInfo.TargetVersion)..." -ForegroundColor Cyan
+            Write-Host "($currentUpdate of $($installedVersions.Count)) Updating .NET Framework $($installed.CurrentVersion) to $($netInfo.TargetVersion)..." -ForegroundColor Cyan
 
             # Check OS compatibility for .NET Framework 4.8.1
             if ($netInfo.TargetVersion -eq "4.8.1" -and -not $script:SupportsDotNet481) {
@@ -1900,7 +1907,7 @@ try {
         }
         else {
             $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
-            Write-Host "[$currentUpdate/$($installedVersions.Count)] Checking .NET $($version.Split('-')[1])..." -ForegroundColor Cyan
+            Write-Host "($currentUpdate of $($installedVersions.Count)) Checking .NET $($version.Split('-')[1])..." -ForegroundColor Cyan
 
             $componentsToUpdate = Get-InstalledDotNetComponents -Installed $installed
 

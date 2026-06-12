@@ -7,6 +7,13 @@ param(
     [switch]$DryRun
 )
 
+if ($DryRun) {
+    $env:DOTNET_UPDATER_DRYRUN = '1'
+}
+else {
+    Remove-Item Env:DOTNET_UPDATER_DRYRUN -ErrorAction SilentlyContinue
+}
+
 $ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'Continue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
