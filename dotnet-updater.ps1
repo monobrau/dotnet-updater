@@ -126,9 +126,12 @@ function Test-DotNetVersionSupported {
     
     $majorVer = [int]$DotNetMajorVersion
     
-    # .NET 6 - Supports Windows 7 SP1+, Server 2012+
+    # .NET 6 - Windows 10/11, Windows 7 SP1+ (6.1+), Server 2012+ (6.2+)
     if ($majorVer -eq 6) {
-        return ($osVersion.Major -ge 6 -and $osVersion.Minor -ge 1)
+        if ($osVersion.Major -ge 10) {
+            return $true
+        }
+        return ($osVersion.Major -eq 6 -and $osVersion.Minor -ge 1)
     }
     
     # .NET 7, 8, 9 - Requires Windows 10 1607+ or Server 2012+
@@ -1532,6 +1535,7 @@ $script:SilentArgsMap = @{
     "Framework" = "/quiet", "/norestart"
     "NET" = "/install", "/quiet", "/norestart"
 }
+$script:FrameworkRebootMarker = 'C:\temp\dotnet-updater-framework-pending-reboot'
 
 function Install-DotNetProcess {
     param(
@@ -1649,6 +1653,10 @@ $releaseValue = Get-DotNetFrameworkVersion -RegistryPath "HKLM:\SOFTWARE\Microso
 if ($releaseValue) {
     Write-Host "Found .NET Framework release value: $releaseValue" -ForegroundColor Gray
 
+    if ($releaseValue -ge 533320 -and (Test-Path $script:FrameworkRebootMarker)) {
+        Remove-Item -Path $script:FrameworkRebootMarker -Force -ErrorAction SilentlyContinue
+    }
+
     # Determine the currently installed Framework version
     $frameworkVersions = $DotNetVersions.Keys | Where-Object { $DotNetVersions[$_].IsFramework } | Sort-Object { $DotNetVersions[$_].MinRelease } -Descending
 
@@ -1673,7 +1681,7 @@ if ($releaseValue) {
         if ($newerVersions) {
             $targetVersion = $newerVersions | Select-Object -First 1
             $targetInfo = $DotNetVersions[$targetVersion]
-            $rebootPending = Test-SystemRebootPending
+            $rebootPending = (Test-SystemRebootPending) -or (Test-Path $script:FrameworkRebootMarker)
 
             if ($rebootPending) {
                 Write-Host ".NET Framework $($targetInfo.TargetVersion) is staged but reboot is required to complete (Release still: $releaseValue)" -ForegroundColor Yellow
@@ -1899,6 +1907,10 @@ try {
                     Write-Host "  Installing .NET Framework $($netInfo.TargetVersion)..."
                     $process = Start-Process -FilePath $installerPath -ArgumentList $script:SilentArgsMap["Framework"] -Wait -PassThru -WindowStyle Hidden
                     Install-DotNetProcess -Process $process -RebootRequired ([ref]$RebootRequired) | Out-Null
+                    if ($process.ExitCode -eq 3010 -or $process.ExitCode -eq 1641) {
+                        New-Item -Path 'C:\temp' -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+                        Set-Content -Path $script:FrameworkRebootMarker -Value $netInfo.TargetVersion -Force
+                    }
                 }
             }
             catch {
