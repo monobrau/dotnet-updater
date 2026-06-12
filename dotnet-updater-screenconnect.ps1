@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    .NET updater for ScreenConnect - compact output and reliable exit codes
+    .NET updater for ScreenConnect - streams live output and writes a log file
 #>
 
 param(
@@ -20,6 +20,7 @@ $ErrorActionPreference = 'Continue'
 
 $ghBase = 'https://raw.githubusercontent.com/monobrau/dotnet-updater/main'
 $cacheBuster = Get-Date -Format 'yyyyMMddHHmmss'
+$logPath = "C:\temp\dotnet-updater-last-run.log"
 
 New-Item -Path 'C:\temp' -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
 
@@ -34,23 +35,39 @@ catch {
 
 Write-Host ".NET Runtime Updater" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host "Log file: $logPath" -ForegroundColor Gray
 Write-Host ""
 
-$output = if ($DryRun) {
-    & $scriptPath -Quiet -DryRun *>&1
-} else {
-    & $scriptPath -Quiet *>&1
+$exitCode = 0
+$noisePattern = '^\s*Attempt \d+ of \d+:|^\s*Querying Microsoft API for latest version\.\.\.|^\s*Trying releases\.json|^\s*Attempting redirect|^\s*Attempting HTML scraping'
+
+try {
+    if ($DryRun) {
+        & $scriptPath -DryRun *>&1 | Tee-Object -FilePath $logPath | ForEach-Object {
+            Write-Host $_.ToString()
+        }
+    }
+    else {
+        & $scriptPath *>&1 | Tee-Object -FilePath $logPath | ForEach-Object {
+            $line = $_.ToString()
+            if ($line -notmatch $noisePattern) {
+                Write-Host $line
+            }
+        }
+    }
+
+    if ($null -ne $LASTEXITCODE) {
+        $exitCode = $LASTEXITCODE
+    }
 }
-
-$filterPattern = '\.NET|Status:|INSTALLED|UPDATE REQUIRED|up to date|Update available|Total |Processing|Installation|Update process completed|Reboot required|ERROR|WARNING|Runtime|Desktop|SDK|ASP\.NET|DRY RUN|Required by|WOULD UPDATE|UP TO DATE|NOT INSTALLED|Dry Run Summary|Missing required|Updates available|PENDING REBOOT'
-
-$output | Where-Object { $_ -match $filterPattern } | ForEach-Object { Write-Host $_ }
-
-$exitCode = $LASTEXITCODE
-if ($null -eq $exitCode) { $exitCode = 0 }
+catch {
+    Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
+    $exitCode = 1
+}
 
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "Scan completed - Exit code: $exitCode" -ForegroundColor $(if ($exitCode -eq 0) { "Green" } else { "Yellow" })
+Write-Host "Full log: $logPath" -ForegroundColor Gray
 
 exit $exitCode

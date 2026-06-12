@@ -19,7 +19,7 @@ $t = Get-Date -Format 'yyyyMMddHHmmss'
 & "C:\temp\dotnet-updater.ps1" -DryRun
 
 # =============================================================================
-# SCREENCONNECT #!ps — UPDATE
+# SCREENCONNECT #!ps — UPDATE (recommended — live output + log file)
 # =============================================================================
 
 #!ps
@@ -31,6 +31,7 @@ New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinu
 $t = Get-Date -Format 'yyyyMMddHHmmss'
 (New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache=$t", "C:\temp\dotnet-updater-sc.ps1")
 & "C:\temp\dotnet-updater-sc.ps1"
+# Full log always written to C:\temp\dotnet-updater-last-run.log
 
 # =============================================================================
 # CMD ONE-LINER — DRY RUN (calls main script directly)

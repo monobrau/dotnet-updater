@@ -30,6 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOTNET_UPDATER_DRYR
 - Prefer ScreenConnect **`#!ps`** blocks over raw cmd for PowerShell scripts.
 - Allow **5–10 minutes** on update runs.
 - Wrapper always re-downloads the latest script from GitHub (no stale cache).
+- Update runs stream live output to ScreenConnect and save a full log at `C:\temp\dotnet-updater-last-run.log`.
 
 ## Run locally
 
