@@ -264,6 +264,25 @@ $DotNetVersions = @{
     }
 }
 
+function Test-SystemRebootPending {
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {
+        return $true
+    }
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {
+        return $true
+    }
+    try {
+        $pending = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction Stop
+        if ($pending.PendingFileRenameOperations) {
+            return $true
+        }
+    }
+    catch {
+        Write-Verbose "Could not read PendingFileRenameOperations: $_"
+    }
+    return $false
+}
+
 # Function to get .NET Framework version from registry
 function Get-DotNetFrameworkVersion {
     param(
@@ -692,7 +711,10 @@ function Invoke-DryRunReport {
         $installed = $InstalledVersions[$version]
 
         if ($installed.IsFramework) {
-            if ($installed.NeedsUpdate) {
+            if ($installed.PendingReboot) {
+                Write-Host "  PENDING REBOOT: .NET Framework $($installed.TargetVersion) (restart required to finish)" -ForegroundColor Yellow
+            }
+            elseif ($installed.NeedsUpdate) {
                 $targetInfo = $DotNetVersionsTable[$version]
                 if ($targetInfo.TargetVersion -eq '4.8.1' -and -not $script:SupportsDotNet481) {
                     $unsupported += [PSCustomObject]@{
@@ -1642,22 +1664,37 @@ if ($releaseValue) {
         } | Sort-Object { $DotNetVersions[$_].MinRelease } -Descending
 
         if ($newerVersions) {
-            # Add the highest available newer version for update
             $targetVersion = $newerVersions | Select-Object -First 1
             $targetInfo = $DotNetVersions[$targetVersion]
+            $rebootPending = Test-SystemRebootPending
 
-            Write-Host "Newer .NET Framework version available: $($targetInfo.TargetVersion) (Release: $($targetInfo.MinRelease))" -ForegroundColor Yellow
-
-            $installedVersions[$targetVersion] = @{
-                Installed = $false  # Not installed yet
-                CurrentReleaseValue = $releaseValue
-                TargetReleaseValue = $targetInfo.MinRelease
-                CurrentVersion = $DotNetVersions[$currentFrameworkVersion].TargetVersion
-                TargetVersion = $targetInfo.TargetVersion
-                IsFramework = $true
-                NeedsUpdate = $true
+            if ($rebootPending) {
+                Write-Host ".NET Framework $($targetInfo.TargetVersion) is staged but reboot is required to complete (Release still: $releaseValue)" -ForegroundColor Yellow
+                $installedVersions[$targetVersion] = @{
+                    Installed = $false
+                    CurrentReleaseValue = $releaseValue
+                    TargetReleaseValue = $targetInfo.MinRelease
+                    CurrentVersion = $DotNetVersions[$currentFrameworkVersion].TargetVersion
+                    TargetVersion = $targetInfo.TargetVersion
+                    IsFramework = $true
+                    NeedsUpdate = $false
+                    PendingReboot = $true
+                }
             }
-            $updateCount++
+            else {
+                Write-Host "Newer .NET Framework version available: $($targetInfo.TargetVersion) (Release: $($targetInfo.MinRelease))" -ForegroundColor Yellow
+                $installedVersions[$targetVersion] = @{
+                    Installed = $false
+                    CurrentReleaseValue = $releaseValue
+                    TargetReleaseValue = $targetInfo.MinRelease
+                    CurrentVersion = $DotNetVersions[$currentFrameworkVersion].TargetVersion
+                    TargetVersion = $targetInfo.TargetVersion
+                    IsFramework = $true
+                    NeedsUpdate = $true
+                    PendingReboot = $false
+                }
+                $updateCount++
+            }
         } else {
             Write-Host ".NET Framework is up to date ($($DotNetVersions[$currentFrameworkVersion].TargetVersion))" -ForegroundColor Green
         }
@@ -1743,7 +1780,12 @@ foreach ($version in $installedVersions.Keys | Sort-Object) {
 
     Write-Host ""
     if ($installed.IsFramework) {
-        if ($installed.NeedsUpdate) {
+        if ($installed.PendingReboot) {
+            Write-Host ".NET Framework $($installed.TargetVersion):" -ForegroundColor Yellow
+            Write-Host "  Current: $($installed.CurrentVersion) (Release: $($installed.CurrentReleaseValue))" -ForegroundColor Gray
+            Write-Host "  Status: PENDING REBOOT" -ForegroundColor Yellow
+        }
+        elseif ($installed.NeedsUpdate) {
             Write-Host ".NET Framework Update Available:" -ForegroundColor Yellow
             Write-Host "  Current: $($installed.CurrentVersion) (Release: $($installed.CurrentReleaseValue))" -ForegroundColor Gray
             Write-Host "  Target: $($installed.TargetVersion) (Release: $($installed.TargetReleaseValue))" -ForegroundColor Gray
@@ -1809,7 +1851,16 @@ try {
         $currentUpdate++
         
         if ($installed.IsFramework) {
-            # .NET Framework update logic
+            if ($installed.PendingReboot) {
+                Write-Host "[$currentUpdate/$($installedVersions.Count)] .NET Framework $($netInfo.TargetVersion) pending reboot - Skipping" -ForegroundColor Yellow
+                Write-Host "  Restart the computer to complete the Framework update." -ForegroundColor Gray
+                continue
+            }
+
+            if (-not $installed.NeedsUpdate) {
+                continue
+            }
+
             Write-Host "[$currentUpdate/$($installedVersions.Count)] Updating .NET Framework $($installed.CurrentVersion) to $($netInfo.TargetVersion)..." -ForegroundColor Cyan
 
             # Check OS compatibility for .NET Framework 4.8.1

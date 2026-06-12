@@ -3,6 +3,10 @@
     .NET updater for ScreenConnect - compact output and reliable exit codes
 #>
 
+param(
+    [switch]$DryRun
+)
+
 $ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'Continue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -25,33 +29,15 @@ Write-Host ".NET Runtime Updater" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 
-$dryRun = $args -contains '-DryRun'
-$scriptArgs = if ($dryRun) { @('-Quiet', '-DryRun') } else { @('-Quiet') }
+$output = if ($DryRun) {
+    & $scriptPath -Quiet -DryRun *>&1
+} else {
+    & $scriptPath -Quiet *>&1
+}
 
-& $scriptPath @scriptArgs *>&1 | Where-Object {
-    $_ -match '\.NET' -or
-    $_ -match 'Status:' -or
-    $_ -match 'INSTALLED' -or
-    $_ -match 'UPDATE REQUIRED' -or
-    $_ -match 'up to date' -or
-    $_ -match 'Update available' -or
-    $_ -match 'Total ' -or
-    $_ -match 'Processing' -or
-    $_ -match 'Installation' -or
-    $_ -match 'Update process completed' -or
-    $_ -match 'Reboot required' -or
-    $_ -match 'ERROR' -or
-    $_ -match 'WARNING' -or
-    $_ -match 'Runtime|Desktop|SDK|ASP\.NET' -or
-    $_ -match 'DRY RUN' -or
-    $_ -match 'Required by' -or
-    $_ -match 'WOULD UPDATE' -or
-    $_ -match 'UP TO DATE' -or
-    $_ -match 'NOT INSTALLED' -or
-    $_ -match 'Dry Run Summary' -or
-    $_ -match 'Missing required' -or
-    $_ -match 'Updates available'
-} | ForEach-Object { Write-Host $_ }
+$filterPattern = '\.NET|Status:|INSTALLED|UPDATE REQUIRED|up to date|Update available|Total |Processing|Installation|Update process completed|Reboot required|ERROR|WARNING|Runtime|Desktop|SDK|ASP\.NET|DRY RUN|Required by|WOULD UPDATE|UP TO DATE|NOT INSTALLED|Dry Run Summary|Missing required|Updates available|PENDING REBOOT'
+
+$output | Where-Object { $_ -match $filterPattern } | ForEach-Object { Write-Host $_ }
 
 $exitCode = $LASTEXITCODE
 if ($null -eq $exitCode) { $exitCode = 0 }
