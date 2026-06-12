@@ -31,7 +31,7 @@ try {
     Write-Output ""
     
     # Run the script and capture output
-    & $scriptPath *>&1 | Tee-Object -FilePath $outputPath
+    & $scriptPath -Quiet *>&1 | Tee-Object -FilePath $outputPath
     
     $exitCode = $LASTEXITCODE
     

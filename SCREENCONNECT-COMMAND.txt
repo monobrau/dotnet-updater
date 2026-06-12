@@ -1,5 +1,5 @@
-# ScreenConnect Command-Friendly One-Liner
-# Copy and paste this entire line into ScreenConnect's "Execute Command" interface
-# Works with ScreenConnect's command execution window
-
+# ScreenConnect — UPDATE (compact) — copy the line below only
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$t=Get-Date -Format 'yyyyMMddHHmmss';New-Item -Path C:\temp -ItemType Directory -Force -ErrorAction SilentlyContinue|Out-Null;try{(New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache='+$t,'C:\temp\dotnet-updater-sc.ps1');& C:\temp\dotnet-updater-sc.ps1;exit $LASTEXITCODE}catch{Write-Host 'ERROR:' $_.Exception.Message -ForegroundColor Red;exit 1}"
+
+# ScreenConnect — DRY RUN — copy the line below only
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$t=Get-Date -Format 'yyyyMMddHHmmss';New-Item -Path C:\temp -ItemType Directory -Force -ErrorAction SilentlyContinue|Out-Null;try{(New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache='+$t,'C:\temp\dotnet-updater-sc.ps1');& C:\temp\dotnet-updater-sc.ps1 -DryRun;exit $LASTEXITCODE}catch{Write-Host 'ERROR:' $_.Exception.Message -ForegroundColor Red;exit 1}"

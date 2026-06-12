@@ -5,10 +5,7 @@
 .DESCRIPTION
     This comprehensive script scans for and updates ALL major .NET versions:
     - .NET Framework 4.6.2, 4.7, 4.7.1, 4.7.2, 4.8, 4.8.1
-    - .NET 6.0 LTS (receives patch updates within 6.x branch)
-    - .NET 7.0 (updates to latest .NET 9.0)
-    - .NET 8.0 LTS (receives patch updates within 8.x branch)
-    - .NET 9.0 (receives patch updates within 9.x branch)
+    - .NET 6.0, 7.0, 8.0, 9.0 (each receives patch updates within its own major branch)
 
     The script runs completely silently with no user interaction required.
     It intelligently compares installed versions with target versions and skips updates
@@ -34,10 +31,8 @@
 
     Update Behavior:
     - .NET Framework: Updates to the highest available Framework version (e.g., 4.8 → 4.8.1)
-    - .NET 6.0 LTS: Receives patch updates (e.g., 6.0.1 → 6.0.x)
-    - .NET 7.0: Updates to .NET 9.0 (end of support migration)
-    - .NET 8.0 LTS: Receives patch updates (e.g., 8.0.1 → 8.0.x)
-    - .NET 9.0: Receives patch updates (e.g., 9.0.0 → 9.0.x)
+    - .NET 6/7/8/9: Each installed major version is patched to its latest release
+    - Desktop, ASP.NET Core, Runtime, and SDK components are updated independently
 
     Runtime Type Detection:
     - Desktop installations receive Desktop Runtime (includes WPF, WinForms)
@@ -46,14 +41,25 @@
 
     Verbosity:
     - Run with -Verbose for detailed diagnostic output
+    - Run with -DryRun to scan app requirements and preview updates without installing
     - Default output shows only essential information
 #>
 
-#Requires -RunAsAdministrator
-
 param(
-    [switch]$RemoveOldVersions
+    [switch]$RemoveOldVersions,
+    [switch]$Quiet,
+    [switch]$DryRun
 )
+
+function Write-Status {
+    param(
+        [string]$Message,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray
+    )
+    if (-not $Quiet) {
+        Write-Host $Message -ForegroundColor $Color
+    }
+}
 
 # Enforce TLS 1.2 for downloads
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -324,12 +330,9 @@ function Get-InstalledDotNetVersions {
         
         if (-not $dotnetExe) {
             Write-Verbose "dotnet.exe not found in PATH or common locations"
-            Write-Host "  DEBUG: dotnet.exe not found. Checked PATH and common installation paths." -ForegroundColor Yellow
-            Write-Host "  DEBUG: Checked paths:" -ForegroundColor Yellow
-            Write-Host "    - PATH: $(if ($dotnetPath) { 'Found' } else { 'Not found' })" -ForegroundColor Yellow
+            Write-Verbose "Checked PATH: $(if ($dotnetPath) { 'Found' } else { 'Not found' })"
             foreach ($path in $commonPaths) {
-                $exists = Test-Path $path
-                Write-Host "    - $path : $(if ($exists) { 'Found' } else { 'Not found' })" -ForegroundColor Yellow
+                Write-Verbose "  $path : $(if (Test-Path $path) { 'Found' } else { 'Not found' })"
             }
             return @{
                 Runtimes = @()
@@ -366,16 +369,15 @@ function Get-InstalledDotNetVersions {
             Write-Verbose "Sample runtimes: $($runtimes[0..([Math]::Min(2, $runtimes.Count-1))] -join ', ')"
         }
         else {
-            # Debug output even when verbose is off
-            Write-Host "  DEBUG: No runtimes found after filtering." -ForegroundColor Yellow
-            Write-Host "  DEBUG: Raw dotnet --list-runtimes output ($($runtimesOutput.Count) lines):" -ForegroundColor Yellow
-            $runtimesOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+            Write-Verbose "No runtimes found after filtering."
+            Write-Verbose "Raw dotnet --list-runtimes output ($($runtimesOutput.Count) lines):"
+            $runtimesOutput | ForEach-Object { Write-Verbose "  $_" }
         }
         if ($sdks.Count -gt 0) {
             Write-Verbose "Sample SDKs: $($sdks[0..([Math]::Min(2, $sdks.Count-1))] -join ', ')"
         }
         else {
-            Write-Host "  DEBUG: No SDKs found. Raw output: $($sdksOutput -join ' | ')" -ForegroundColor Yellow
+            Write-Verbose "No SDKs found. Raw output: $($sdksOutput -join ' | ')"
         }
         
         return @{
@@ -394,73 +396,453 @@ function Get-InstalledDotNetVersions {
     }
 }
 
-# Function to uninstall .NET runtime or SDK
-function Uninstall-DotNetVersion {
-    param(
-        [string]$Version,
-        [string]$Type  # "Runtime", "Desktop", "AspCore", or "SDK"
+# Function to find .NET uninstall entries from registry (fast; avoids Win32_Product)
+function Get-DotNetUninstallEntries {
+    $registryPaths = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
 
-    try {
-        Write-Verbose "Attempting to uninstall .NET $Version $Type"
-        
-        # Use Windows Installer to find and uninstall .NET versions
-        $uninstallerFound = $false
-        
-        # Use Get-CimInstance to find installed .NET versions (preferred method)
-        try {
-            $products = Get-CimInstance -ClassName Win32_Product -Filter "Name LIKE '%Microsoft .NET%$Version%'" -ErrorAction SilentlyContinue
-            foreach ($product in $products) {
-                if ($product.Name -match "\.NET.*$Version") {
-                    Write-Host "  Found installer: $($product.Name)" -ForegroundColor Gray
-                    $uninstallerFound = $true
-                    Write-Host "  Uninstalling $($product.Name)..." -ForegroundColor Yellow
-                    $result = Invoke-CimMethod -InputObject $product -MethodName Uninstall
-                    if ($result.ReturnValue -eq 0) {
-                        Write-Host "  Successfully uninstalled: $($product.Name)" -ForegroundColor Green
-                        return $true
-                    }
-                    else {
-                        Write-Warning "  Uninstall returned code: $($result.ReturnValue)"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Verbose "Could not query CIM for uninstallers: $_"
-            # Fallback to WMI
+    foreach ($path in $registryPaths) {
+        Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -match 'Microsoft (\.NET|ASP\.NET)' } |
+            Select-Object DisplayName, UninstallString, QuietUninstallString, PSChildName
+    }
+}
+
+$script:RequiredDotNetCache = $null
+
+function Get-RequiredDotNetVersions {
+    if ($script:RequiredDotNetCache) {
+        return $script:RequiredDotNetCache
+    }
+
+    $searchRoots = @(
+        ${env:ProgramFiles},
+        ${env:ProgramFiles(x86)},
+        'C:\inetpub\wwwroot'
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    $majors = @{}
+    $references = @()
+
+    foreach ($root in $searchRoots) {
+        $configFiles = Get-ChildItem -Path $root -Filter '*.runtimeconfig.json' -Recurse -ErrorAction SilentlyContinue -Depth 6 |
+            Select-Object -First 500
+
+        foreach ($configFile in $configFiles) {
+            $majorVersion = $null
+            $frameworkName = $null
+            $frameworkVersion = $null
+
             try {
-                $products = Get-WmiObject -Class Win32_Product -Filter "Name LIKE '%Microsoft .NET%$Version%'" -ErrorAction SilentlyContinue
-                foreach ($product in $products) {
-                    if ($product.Name -match "\.NET.*$Version") {
-                        Write-Host "  Found installer: $($product.Name)" -ForegroundColor Gray
-                        $uninstallerFound = $true
-                        Write-Host "  Uninstalling $($product.Name)..." -ForegroundColor Yellow
-                        $result = $product.Uninstall()
-                        if ($result.ReturnValue -eq 0) {
-                            Write-Host "  Successfully uninstalled: $($product.Name)" -ForegroundColor Green
-                            return $true
-                        }
-                        else {
-                            Write-Warning "  Uninstall returned code: $($result.ReturnValue)"
+                $config = Get-Content -Path $configFile.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                $frameworks = @()
+                if ($config.runtimeOptions.framework) {
+                    $frameworks += $config.runtimeOptions.framework
+                }
+                if ($config.runtimeOptions.frameworks) {
+                    $frameworks += @($config.runtimeOptions.frameworks)
+                }
+
+                foreach ($framework in $frameworks) {
+                    $frameworkName = $framework.name
+                    $frameworkVersion = $framework.version
+                    if ($frameworkVersion -match '^(\d+)\.') {
+                        $majorVersion = [int]$matches[1]
+                        if ($majorVersion -ge 5) {
+                            if (-not $majors.ContainsKey($majorVersion)) {
+                                $majors[$majorVersion] = @()
+                            }
+                            $ref = [PSCustomObject]@{
+                                MajorVersion = $majorVersion
+                                Framework = $frameworkName
+                                Version = $frameworkVersion
+                                Path = $configFile.FullName
+                                Source = 'runtimeconfig.json'
+                            }
+                            $majors[$majorVersion] += $ref
+                            $references += $ref
                         }
                     }
                 }
             }
             catch {
-                Write-Verbose "Could not query WMI for uninstallers: $_"
+                $content = Get-Content -Path $configFile.FullName -Raw -ErrorAction SilentlyContinue
+                if ($content -match 'Microsoft\.(NETCore|AspNetCore|WindowsDesktop)\.App.*?(\d+)\.\d+') {
+                    $majorVersion = [int]$matches[2]
+                    if ($majorVersion -ge 5) {
+                        if (-not $majors.ContainsKey($majorVersion)) {
+                            $majors[$majorVersion] = @()
+                        }
+                        $ref = [PSCustomObject]@{
+                            MajorVersion = $majorVersion
+                            Framework = $matches[1]
+                            Version = $null
+                            Path = $configFile.FullName
+                            Source = 'runtimeconfig.json'
+                        }
+                        $majors[$majorVersion] += $ref
+                        $references += $ref
+                    }
+                }
             }
         }
-        
-        if (-not $uninstallerFound) {
-            Write-Host "  Warning: Could not find Windows Installer entry for $Version $Type" -ForegroundColor Yellow
-            Write-Host "  You may need to uninstall manually via Control Panel > Programs and Features" -ForegroundColor Yellow
+
+        $depsFiles = Get-ChildItem -Path $root -Filter '*.deps.json' -Recurse -ErrorAction SilentlyContinue -Depth 6 |
+            Select-Object -First 300
+
+        foreach ($depsFile in $depsFiles) {
+            $content = Get-Content -Path $depsFile.FullName -Raw -ErrorAction SilentlyContinue
+            if (-not $content) { continue }
+
+            if ($content -match '"targetFramework"\s*:\s*"(net\d+\.\d+)"') {
+                $tfm = $matches[1]
+                if ($tfm -match '^net(\d+)\.') {
+                    $majorVersion = [int]$matches[1]
+                    if ($majorVersion -ge 5) {
+                        if (-not $majors.ContainsKey($majorVersion)) {
+                            $majors[$majorVersion] = @()
+                        }
+                        $ref = [PSCustomObject]@{
+                            MajorVersion = $majorVersion
+                            Framework = $tfm
+                            Version = $null
+                            Path = $depsFile.FullName
+                            Source = 'deps.json'
+                        }
+                        $majors[$majorVersion] += $ref
+                        $references += $ref
+                    }
+                }
+            }
         }
-        
+    }
+
+    $script:RequiredDotNetCache = [PSCustomObject]@{
+        Majors = $majors
+        References = $references
+    }
+    return $script:RequiredDotNetCache
+}
+
+function Test-DotNetVersionInUse {
+    param(
+        [int]$MajorVersion
+    )
+
+    $required = Get-RequiredDotNetVersions
+    return $required.Majors.ContainsKey($MajorVersion)
+}
+
+function Get-InstalledDotNetComponents {
+    param(
+        [hashtable]$Installed
+    )
+
+    $components = @()
+
+    $desktopLine = @($Installed.Desktop) | Select-Object -First 1
+    if ($desktopLine -match '(\d+\.\d+\.\d+)') {
+        $components += [PSCustomObject]@{ Type = 'Desktop'; CurrentVersion = $matches[1]; Line = $desktopLine }
+    }
+
+    $aspCoreLine = @($Installed.AspCore) | Select-Object -First 1
+    if ($aspCoreLine -match '(\d+\.\d+\.\d+)') {
+        $components += [PSCustomObject]@{ Type = 'AspNetCore'; CurrentVersion = $matches[1]; Line = $aspCoreLine }
+    }
+
+    if (-not $Installed.Desktop) {
+        $runtimeLine = @($Installed.Runtime) | Select-Object -First 1
+        if ($runtimeLine -match '(\d+\.\d+\.\d+)') {
+            $components += [PSCustomObject]@{ Type = 'Runtime'; CurrentVersion = $matches[1]; Line = $runtimeLine }
+        }
+    }
+
+    foreach ($sdkLine in @($Installed.SDK)) {
+        if ($sdkLine -match '^(\d+\.\d+\.\d+)') {
+            $components += [PSCustomObject]@{ Type = 'SDK'; CurrentVersion = $matches[1]; Line = $sdkLine }
+            break
+        }
+    }
+
+    return $components
+}
+
+function Test-DotNetComponentUpdate {
+    param(
+        [int]$MajorVersion,
+        [string]$Component,
+        [string]$CurrentVersion
+    )
+
+    $componentLabels = @{
+        Desktop    = 'Desktop Runtime'
+        AspNetCore = 'ASP.NET Core Runtime'
+        Runtime    = 'Runtime'
+        SDK        = 'SDK'
+    }
+    $displayName = $componentLabels[$Component]
+
+    if (-not (Test-DotNetVersionSupported -DotNetMajorVersion $MajorVersion)) {
+        return [PSCustomObject]@{
+            Status = 'Unsupported'
+            MajorVersion = $MajorVersion
+            Component = $Component
+            DisplayName = $displayName
+            CurrentVersion = $CurrentVersion
+            LatestVersion = $null
+        }
+    }
+
+    $latestVersion = Get-DotNetLatestVersion -MajorVersion $MajorVersion
+    if (-not $latestVersion) {
+        return [PSCustomObject]@{
+            Status = 'Unknown'
+            MajorVersion = $MajorVersion
+            Component = $Component
+            DisplayName = $displayName
+            CurrentVersion = $CurrentVersion
+            LatestVersion = $null
+        }
+    }
+
+    $status = if (Compare-Version -CurrentVersion $CurrentVersion -TargetVersion $latestVersion) {
+        'UpToDate'
+    } else {
+        'WouldUpdate'
+    }
+
+    return [PSCustomObject]@{
+        Status = $status
+        MajorVersion = $MajorVersion
+        Component = $Component
+        DisplayName = $displayName
+        CurrentVersion = $CurrentVersion
+        LatestVersion = $latestVersion
+    }
+}
+
+function Get-InstalledDotNetMajors {
+    param(
+        [hashtable]$DotNetInfo
+    )
+
+    $majors = @{}
+    if (-not $DotNetInfo.Available) {
+        return $majors
+    }
+
+    foreach ($runtime in $DotNetInfo.Runtimes) {
+        if ($runtime -match 'Microsoft\.(NETCore|WindowsDesktop|AspNetCore)\.App (\d+)\.') {
+            $majors[[int]$matches[2]] = $true
+        }
+    }
+    foreach ($sdk in $DotNetInfo.SDKs) {
+        if ($sdk -match '^(\d+)\.') {
+            $majors[[int]$matches[1]] = $true
+        }
+    }
+    return $majors
+}
+
+function Invoke-DryRunReport {
+    param(
+        [hashtable]$InstalledVersions,
+        [hashtable]$DotNetVersionsTable,
+        [hashtable]$DotNetInfo
+    )
+
+    Write-Host "=============================================" -ForegroundColor Cyan
+    Write-Host "DRY RUN - No downloads or installs" -ForegroundColor Cyan
+    Write-Host "=============================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    $required = Get-RequiredDotNetVersions
+    $installedMajors = Get-InstalledDotNetMajors -DotNetInfo $DotNetInfo
+    $wouldUpdate = @()
+    $upToDate = @()
+    $unsupported = @()
+
+    Write-Host "Required by deployed apps:" -ForegroundColor Yellow
+    if ($required.Majors.Count -eq 0) {
+        Write-Host "  None detected (scanned Program Files, Program Files (x86), inetpub)" -ForegroundColor Gray
+    }
+    else {
+        foreach ($major in ($required.Majors.Keys | Sort-Object)) {
+            $appCount = $required.Majors[$major].Count
+            $installed = if ($installedMajors.ContainsKey($major)) { 'installed' } else { 'NOT INSTALLED' }
+            $color = if ($installedMajors.ContainsKey($major)) { 'Green' } else { 'Red' }
+            Write-Host "  .NET $major - $appCount app reference(s) - $installed" -ForegroundColor $color
+            if ($VerbosePreference -eq 'Continue') {
+                foreach ($ref in ($required.Majors[$major] | Select-Object -First 5)) {
+                    Write-Verbose "    $($ref.Path) [$($ref.Source)]"
+                }
+            }
+        }
+    }
+    Write-Host ""
+
+    Write-Host "Installed components - update check:" -ForegroundColor Yellow
+    if ($InstalledVersions.Count -eq 0) {
+        Write-Host "  No .NET installations detected on this machine." -ForegroundColor Gray
+    }
+
+    foreach ($version in $InstalledVersions.Keys | Sort-Object) {
+        $installed = $InstalledVersions[$version]
+
+        if ($installed.IsFramework) {
+            if ($installed.NeedsUpdate) {
+                $targetInfo = $DotNetVersionsTable[$version]
+                if ($targetInfo.TargetVersion -eq '4.8.1' -and -not $script:SupportsDotNet481) {
+                    $unsupported += [PSCustomObject]@{
+                        Name = ".NET Framework $($installed.CurrentVersion) -> $($installed.TargetVersion)"
+                        Reason = 'OS does not support .NET Framework 4.8.1'
+                    }
+                }
+                else {
+                    $wouldUpdate += [PSCustomObject]@{
+                        Name = ".NET Framework $($installed.CurrentVersion) -> $($installed.TargetVersion)"
+                        CurrentVersion = $installed.CurrentVersion
+                        LatestVersion = $installed.TargetVersion
+                    }
+                    Write-Host "  WOULD UPDATE: .NET Framework $($installed.CurrentVersion) -> $($installed.TargetVersion)" -ForegroundColor Yellow
+                }
+            }
+            else {
+                $upToDate += ".NET Framework $($installed.CurrentVersion)"
+                Write-Host "  UP TO DATE: .NET Framework $($installed.CurrentVersion)" -ForegroundColor Cyan
+            }
+            continue
+        }
+
+        $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
+        foreach ($component in Get-InstalledDotNetComponents -Installed $installed) {
+            $result = Test-DotNetComponentUpdate -MajorVersion $majorVersion -Component $component.Type -CurrentVersion $component.CurrentVersion
+
+            switch ($result.Status) {
+                'WouldUpdate' {
+                    $wouldUpdate += $result
+                    Write-Host "  WOULD UPDATE: .NET $majorVersion $($result.DisplayName) $($result.CurrentVersion) -> $($result.LatestVersion)" -ForegroundColor Yellow
+                }
+                'UpToDate' {
+                    $upToDate += $result
+                    Write-Host "  UP TO DATE: .NET $majorVersion $($result.DisplayName) $($result.CurrentVersion)" -ForegroundColor Cyan
+                }
+                'Unsupported' {
+                    $unsupported += $result
+                    Write-Host "  UNSUPPORTED: .NET $majorVersion $($result.DisplayName) on this OS" -ForegroundColor DarkYellow
+                }
+                default {
+                    Write-Host "  UNKNOWN: .NET $majorVersion $($result.DisplayName) - could not query latest version" -ForegroundColor DarkYellow
+                }
+            }
+        }
+    }
+
+    if ($RemoveOldVersions) {
+        Write-Host ""
+        Write-Host "Would remove (with -RemoveOldVersions):" -ForegroundColor Yellow
+        $versionsToRemove = @()
+        $majorsInUse = $installedMajors.Clone()
+        $installedMajorList = $majorsInUse.Keys | Sort-Object
+        $newestMajor = if ($installedMajorList) { ($installedMajorList | Measure-Object -Maximum).Maximum } else { 0 }
+
+        if ($DotNetInfo.Available -and $newestMajor -gt 0) {
+            foreach ($runtime in $DotNetInfo.Runtimes) {
+                $candidates = @(
+                    @{ Pattern = 'Microsoft\.NETCore\.App (\d+\.\d+\.\d+)'; Type = 'Runtime' }
+                    @{ Pattern = 'Microsoft\.WindowsDesktop\.App (\d+\.\d+\.\d+)'; Type = 'Desktop' }
+                    @{ Pattern = 'Microsoft\.AspNetCore\.App (\d+\.\d+\.\d+)'; Type = 'AspCore' }
+                )
+                foreach ($candidate in $candidates) {
+                    if ($runtime -match $candidate.Pattern) {
+                        $ver = $matches[1]
+                        $major = [int]$ver.Split('.')[0]
+                        if ($major -lt $newestMajor -and -not (Test-DotNetVersionInUse -MajorVersion $major)) {
+                            $versionsToRemove += "$($candidate.Type) $ver"
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($versionsToRemove.Count -gt 0) {
+            foreach ($item in $versionsToRemove) {
+                Write-Host "  WOULD REMOVE: $item" -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "  Nothing to remove" -ForegroundColor Gray
+        }
+    }
+
+    Write-Host ""
+    Write-Host "=============================================" -ForegroundColor Cyan
+    Write-Host "Dry Run Summary" -ForegroundColor Cyan
+    Write-Host "=============================================" -ForegroundColor Cyan
+    Write-Host "  App-required majors:     $(if ($required.Majors.Count) { ($required.Majors.Keys | Sort-Object) -join ', ' } else { 'none detected' })" -ForegroundColor Gray
+    Write-Host "  Installed majors:        $(if ($installedMajors.Count) { ($installedMajors.Keys | Sort-Object) -join ', ' } else { 'none' })" -ForegroundColor Gray
+    $missingRequired = @($required.Majors.Keys | Where-Object { -not $installedMajors.ContainsKey($_) } | Sort-Object)
+    Write-Host "  Missing required:        $(if ($missingRequired.Count) { $missingRequired -join ', ' } else { 'none' })" -ForegroundColor $(if ($missingRequired.Count) { 'Red' } else { 'Gray' })
+    Write-Host "  Updates available:       $($wouldUpdate.Count)" -ForegroundColor $(if ($wouldUpdate.Count) { 'Yellow' } else { 'Green' })
+    Write-Host "  Already up to date:     $($upToDate.Count)" -ForegroundColor Gray
+    Write-Host "=============================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Run without -DryRun to apply updates." -ForegroundColor Cyan
+}
+
+# Function to uninstall a .NET component via registry uninstall string
+function Uninstall-DotNetVersion {
+    param(
+        [string]$Version,
+        [string]$Type
+    )
+
+    $typePatterns = @{
+        Runtime  = "\.NET (Runtime|Host) - $([regex]::Escape($Version))"
+        Desktop  = "\.NET Desktop Runtime - $([regex]::Escape($Version))"
+        AspCore  = "ASP\.NET Core .+ Runtime - $([regex]::Escape($Version))"
+        SDK      = "\.NET SDK - $([regex]::Escape($Version))"
+    }
+
+    $pattern = $typePatterns[$Type]
+    if (-not $pattern) {
+        Write-Warning "  Unknown component type for uninstall: $Type"
         return $false
     }
+
+    try {
+        $entries = Get-DotNetUninstallEntries | Where-Object { $_.DisplayName -match $pattern }
+        if (-not $entries) {
+            Write-Status "  No uninstall entry found for $Type $Version" Yellow
+            return $false
+        }
+
+        $removed = $false
+        foreach ($entry in $entries) {
+            $uninstallCmd = if ($entry.QuietUninstallString) { $entry.QuietUninstallString } else { $entry.UninstallString }
+            if (-not $uninstallCmd) { continue }
+
+            Write-Status "  Uninstalling $($entry.DisplayName)..." Yellow
+            if ($uninstallCmd -match 'msiexec') {
+                if ($uninstallCmd -notmatch '/quiet') {
+                    $uninstallCmd = $uninstallCmd -replace '/I', '/X' -replace '/i', '/x'
+                    if ($uninstallCmd -notmatch '/quiet') { $uninstallCmd += ' /quiet /norestart' }
+                }
+                Start-Process -FilePath 'cmd.exe' -ArgumentList "/c $uninstallCmd" -Wait -WindowStyle Hidden | Out-Null
+                $removed = $true
+            }
+            else {
+                Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$uninstallCmd`" /quiet /norestart" -Wait -WindowStyle Hidden | Out-Null
+                $removed = $true
+            }
+        }
+
+        return $removed
+    }
     catch {
-        Write-Warning "Error uninstalling .NET $Version ${Type}: $_"
+        Write-Warning "Error uninstalling .NET $Version $Type : $_"
         return $false
     }
 }
@@ -717,19 +1099,38 @@ function Get-DotNetDownloadUrlFromReleases {
             Write-Verbose "Available releases: $(if ($releases.releases) { ($releases.releases | Select-Object -First 3 | ForEach-Object { $_.'release-version' -or $_.version }) -join ', ' } else { 'none found' })"
             return $null
         }
-        
-        # Look for Windows x64 installer - try different property names
+
+        # Microsoft nests installers under component objects (runtime, windowsdesktop, etc.)
         $files = $null
-        if ($release.files) {
+        $componentPropertyMap = @{
+            Desktop    = 'windowsdesktop'
+            AspNetCore = 'aspnetcore-runtime'
+            Runtime    = 'runtime'
+            SDK        = 'sdk'
+        }
+
+        if ($componentPropertyMap.ContainsKey($Component)) {
+            $componentNode = $release.($componentPropertyMap[$Component])
+            if ($componentNode -and $componentNode.files) {
+                $files = $componentNode.files
+            }
+            elseif ($Component -eq 'SDK' -and $release.sdks) {
+                $sdkWithFiles = @($release.sdks) | Where-Object { $_.files } | Select-Object -First 1
+                if ($sdkWithFiles) {
+                    $files = $sdkWithFiles.files
+                }
+            }
+        }
+
+        if (-not $files -and $release.files) {
             $files = $release.files
         }
-        elseif ($release.Files) {
+        elseif (-not $files -and $release.Files) {
             $files = $release.Files
         }
-        
+
         if (-not $files) {
-            Write-Verbose "No files found in release $Version"
-            Write-Host "  DEBUG: No files array found in release $Version" -ForegroundColor Yellow
+            Write-Verbose "No files found in release $Version for component $Component"
             return $null
         }
         
@@ -739,24 +1140,31 @@ function Get-DotNetDownloadUrlFromReleases {
         Write-Verbose "Sample files: $($sampleFiles -join ', ')"
         
         if ($Component -eq "Desktop") {
-            $file = $files | Where-Object { 
-                ($_.name -match 'windowsdesktop.*runtime' -or $_.Name -match 'windowsdesktop.*runtime') -and 
-                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and 
+            $file = $files | Where-Object {
+                ($_.name -match 'windowsdesktop.*runtime' -or $_.Name -match 'windowsdesktop.*runtime') -and
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and
+                ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
+            } | Select-Object -First 1
+        }
+        elseif ($Component -eq "AspNetCore") {
+            $file = $files | Where-Object {
+                ($_.name -match '^aspnetcore-runtime' -or $_.Name -match '^aspnetcore-runtime') -and
+                ($_.name -notmatch 'composite' -and $_.Name -notmatch 'composite') -and
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and
                 ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
             } | Select-Object -First 1
         }
         elseif ($Component -eq "Runtime") {
-            $file = $files | Where-Object { 
-                ($_.name -match 'dotnet.*runtime' -or $_.Name -match 'dotnet.*runtime') -and 
-                ($_.name -notmatch 'desktop' -and $_.Name -notmatch 'desktop') -and
-                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and 
+            $file = $files | Where-Object {
+                ($_.name -match '^dotnet-runtime' -or $_.Name -match '^dotnet-runtime') -and
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and
                 ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
             } | Select-Object -First 1
         }
         else {
-            $file = $files | Where-Object { 
-                ($_.name -match 'dotnet.*sdk' -or $_.Name -match 'dotnet.*sdk') -and 
-                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and 
+            $file = $files | Where-Object {
+                ($_.name -match '^dotnet-sdk' -or $_.Name -match '^dotnet-sdk') -and
+                ($_.rid -eq 'win-x64' -or $_.Rid -eq 'win-x64') -and
                 ($_.name -match '\.exe$' -or $_.Name -match '\.exe$')
             } | Select-Object -First 1
         }
@@ -797,10 +1205,7 @@ function Get-DotNetDownloadUrlFromReleases {
                 $allProps = ($file | Get-Member -MemberType NoteProperty).Name -join ', '
                 Write-Verbose "File found but no URL property found. Available properties: $allProps"
                 Write-Verbose "File object: $($file | ConvertTo-Json -Depth 2)"
-                # Show all file properties for debugging
-                Write-Host "  DEBUG: Found installer file but no URL property. File properties: $allProps" -ForegroundColor Yellow
-                Write-Host "  DEBUG: File name: $($file.name -or $file.Name)" -ForegroundColor Yellow
-                Write-Host "  DEBUG: File RID: $($file.rid -or $file.Rid)" -ForegroundColor Yellow
+                Write-Verbose "File name: $($file.name -or $file.Name), RID: $($file.rid -or $file.Rid)"
             }
         }
         else {
@@ -810,9 +1215,8 @@ function Get-DotNetDownloadUrlFromReleases {
                 $rid = $_.rid -or $_.Rid
                 "$name (RID: $rid)"
             }) -join ', '
-            Write-Verbose "Available files: $availableFiles"
-            Write-Host "  DEBUG: No matching installer found. Component=$Component, RID=win-x64" -ForegroundColor Yellow
-            Write-Host "  DEBUG: Available files (first 5): $availableFiles" -ForegroundColor Yellow
+            Write-Verbose "No matching installer for Component=$Component, RID=win-x64"
+            Write-Verbose "Available files (first 5): $availableFiles"
         }
         
         return $null
@@ -828,7 +1232,7 @@ function Get-DotNetDownloadUrlFromReleases {
 function Get-DotNetDownloadUrl {
     param(
         [int]$MajorVersion,
-        [string]$Component = "Desktop"  # Runtime, Desktop, or SDK
+        [string]$Component = "Desktop"  # Runtime, Desktop, AspNetCore, or SDK
     )
 
     $maxRetries = 3
@@ -839,40 +1243,38 @@ function Get-DotNetDownloadUrl {
         try {
             $attempt++
             Write-Verbose "Fetching download URL attempt $attempt of $maxRetries"
-            Write-Host "  Attempt ${attempt} of ${maxRetries}: Getting download URL for .NET ${MajorVersion}.0 ${Component}..." -ForegroundColor Gray
+            Write-Status "  Attempt ${attempt} of ${maxRetries}: Getting download URL for .NET ${MajorVersion}.0 ${Component}..."
 
             # First, try to get the latest version from the API
             Write-Verbose "Getting latest version for .NET $MajorVersion.0 from Microsoft API..."
-            Write-Host "  Querying Microsoft API for latest version..." -ForegroundColor Gray
+            Write-Status "  Querying Microsoft API for latest version..."
             $latestVersion = Get-DotNetLatestVersion -MajorVersion $MajorVersion
             
             if ($latestVersion) {
-                Write-Host "  API returned latest version: $latestVersion" -ForegroundColor Green
-                Write-Verbose "Found latest version: $latestVersion"
-                Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
+                Write-Status "  Latest available version: $latestVersion" Green
                 
                 # First, try to get URL directly from releases.json (most reliable)
                 Write-Verbose "Attempting to get download URL from releases.json API..."
-                Write-Host "  Trying releases.json API method..." -ForegroundColor Gray
+                Write-Status "  Trying releases.json API method..."
                 $directUrl = Get-DotNetDownloadUrlFromReleases -MajorVersion $MajorVersion -Component $Component -Version $latestVersion
                 
                 if ($directUrl) {
                     Write-Verbose "Successfully got download URL from releases.json: $directUrl"
-                    Write-Host "  Download URL retrieved successfully" -ForegroundColor Green
+                    Write-Status "  Download URL retrieved successfully" Green
                     return $directUrl
                 }
                 else {
                     Write-Verbose "releases.json API method returned no URL"
-                    Write-Host "  releases.json API method failed, trying redirect..." -ForegroundColor Gray
+                    Write-Status "  releases.json API method failed, trying redirect..."
                 }
                 
-                # Fallback: Try redirect following from thank-you page
                 Write-Verbose "releases.json method failed, trying redirect following..."
-                Write-Host "  Attempting redirect resolution..." -ForegroundColor Gray
+                Write-Status "  Attempting redirect resolution..."
                 
-                # Construct the thank-you page URL (these redirect to actual downloads)
                 $thankYouUrl = if ($Component -eq "Desktop") {
                     "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-desktop-$latestVersion-windows-x64-installer"
+                } elseif ($Component -eq "AspNetCore") {
+                    "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-aspnetcore-$latestVersion-windows-x64-installer"
                 } elseif ($Component -eq "Runtime") {
                     "https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-$latestVersion-windows-x64-installer"
                 } else {
@@ -964,7 +1366,7 @@ function Get-DotNetDownloadUrl {
                     # Check if it's a valid download URL
                     if ($actualUrl -match '\.exe$' -or $actualUrl -match 'download\.visualstudio\.microsoft\.com') {
                         Write-Verbose "Successfully resolved download URL: $actualUrl"
-                        Write-Host "  Download URL resolved successfully" -ForegroundColor Green
+                        Write-Status "  Download URL resolved successfully" Green
                         return $actualUrl
                     }
                     else {
@@ -984,7 +1386,7 @@ function Get-DotNetDownloadUrl {
                                 
                                 if ($finalUrl -match '\.exe$' -or $finalUrl -match 'download\.visualstudio\.microsoft\.com') {
                                     Write-Verbose "Successfully resolved final download URL: $finalUrl"
-                                    Write-Host "  Download URL resolved successfully" -ForegroundColor Green
+                                    Write-Status "  Download URL resolved successfully" Green
                                     return $finalUrl
                                 }
                             }
@@ -992,23 +1394,23 @@ function Get-DotNetDownloadUrl {
                                 Write-Verbose "Could not follow intermediate redirect: $_"
                             }
                         }
-                        Write-Host "  Redirect resolution failed - URL doesn't match expected pattern" -ForegroundColor Yellow
+                        Write-Status "  Redirect resolution failed - URL doesn't match expected pattern" Yellow
                     }
                 }
                 else {
                     Write-Verbose "No URL resolved from redirect"
-                    Write-Host "  Redirect resolution failed - no URL returned" -ForegroundColor Yellow
+                    Write-Status "  Redirect resolution failed - no URL returned" Yellow
                 }
             }
             else {
                 Write-Verbose "Could not get latest version from API, falling back to HTML scraping"
-                Write-Host "  API did not return a version (may be offline or version not found)" -ForegroundColor Yellow
-                Write-Host "  Falling back to HTML scraping method..." -ForegroundColor Gray
+                Write-Status "  API did not return a version (may be offline or version not found)" Yellow
+                Write-Status "  Falling back to HTML scraping method..."
             }
             
             # Fallback: Try scraping the download page
             Write-Verbose "Falling back to HTML scraping method"
-            Write-Host "  Attempting HTML scraping fallback..." -ForegroundColor Gray
+            Write-Status "  Attempting HTML scraping fallback..."
             $downloadPage = "https://dotnet.microsoft.com/en-us/download/dotnet/$MajorVersion.0"
             try {
                 $downloadPage = Add-CacheBuster -Url $downloadPage
@@ -1036,6 +1438,12 @@ function Get-DotNetDownloadUrl {
                     'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^"]+windowsdesktop-runtime-[^"]+win-x64\.exe)"'
                     'href="(https://[^"]+windowsdesktop-runtime-[^"]+win-x64\.exe)"'
                     'data-installer-url="([^"]+windowsdesktop-runtime-[^"]+win-x64\.exe)"'
+                )
+            } elseif ($Component -eq "AspNetCore") {
+                $patterns = @(
+                    'href="(https://download\.visualstudio\.microsoft\.com/download/pr/[^"]+aspnetcore-runtime-[^"]+win-x64\.exe)"'
+                    'href="(https://[^"]+aspnetcore-runtime-[^"]+win-x64\.exe)"'
+                    'data-installer-url="([^"]+aspnetcore-runtime-[^"]+win-x64\.exe)"'
                 )
             } elseif ($Component -eq "Runtime") {
                 $patterns = @(
@@ -1089,6 +1497,114 @@ function Get-DotNetDownloadUrl {
 
     Write-Warning "Could not extract download URL from Microsoft page after $maxRetries attempts"
     return $null
+}
+
+$script:SilentArgsMap = @{
+    "Framework" = "/quiet", "/norestart"
+    "NET" = "/install", "/quiet", "/norestart"
+}
+
+function Install-DotNetProcess {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [ref]$RebootRequired
+    )
+
+    switch ($Process.ExitCode) {
+        0 {
+            Write-Status "  Installation successful." Green
+            return $true
+        }
+        3010 {
+            Write-Status "  Installation successful. Reboot required." Yellow
+            $RebootRequired.Value = $true
+            return $true
+        }
+        1641 {
+            Write-Status "  Installation successful. Reboot initiated." Yellow
+            $RebootRequired.Value = $true
+            return $true
+        }
+        default {
+            Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
+            return $false
+        }
+    }
+}
+
+function Update-DotNetComponent {
+    param(
+        [int]$MajorVersion,
+        [string]$Component,
+        [string]$CurrentVersion,
+        [string]$TempDir,
+        [ref]$RebootRequired,
+        [ref]$DownloadedFiles
+    )
+
+    $componentLabels = @{
+        Desktop    = "Desktop Runtime"
+        AspNetCore = "ASP.NET Core Runtime"
+        Runtime    = "Runtime"
+        SDK        = "SDK"
+    }
+    $displayName = $componentLabels[$Component]
+
+    if (-not (Test-DotNetVersionSupported -DotNetMajorVersion $MajorVersion)) {
+        Write-Status "  .NET $MajorVersion $displayName is not supported on this OS - Skipping" Yellow
+        return
+    }
+
+    Write-Status "  Checking .NET $MajorVersion $displayName (current: $CurrentVersion)..."
+
+    $latestVersion = Get-DotNetLatestVersion -MajorVersion $MajorVersion
+    if ($latestVersion -and (Compare-Version -CurrentVersion $CurrentVersion -TargetVersion $latestVersion)) {
+        Write-Status "  .NET $MajorVersion $displayName is up to date ($CurrentVersion)" Cyan
+        return
+    }
+
+    $url = Get-DotNetDownloadUrl -MajorVersion $MajorVersion -Component $Component
+    if (-not $url) {
+        Write-Warning "  Could not get download URL for .NET $MajorVersion $displayName."
+        return
+    }
+
+    $tempInstallerPath = Join-Path $TempDir "dotnet-$MajorVersion.0-$($Component.ToLower())-check.exe"
+
+    try {
+        Write-Status "  Downloading .NET $MajorVersion $displayName..."
+        Invoke-WebRequestWithRetry -Uri $url -OutFile $tempInstallerPath
+
+        if (-not (Test-DownloadedFile -FilePath $tempInstallerPath -MinimumSizeBytes 1048576)) {
+            Write-Warning "  Downloaded file validation failed for .NET $MajorVersion $displayName."
+            Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        $installerVersion = Get-InstallerVersion -FilePath $tempInstallerPath
+        if ($installerVersion -and (Compare-Version -CurrentVersion $CurrentVersion -TargetVersion $installerVersion)) {
+            Write-Status "  .NET $MajorVersion $displayName is up to date ($CurrentVersion)" Cyan
+            Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        $installerPath = Join-Path $TempDir "dotnet-$MajorVersion.0-$($Component.ToLower()).exe"
+        Move-Item -Path $tempInstallerPath -Destination $installerPath -Force
+        $DownloadedFiles.Value += $installerPath
+
+        $targetLabel = if ($installerVersion) { $installerVersion } else { "latest" }
+        Write-Status "  Update available: $CurrentVersion -> $targetLabel" Yellow
+        Write-Status "  Installing .NET $MajorVersion $displayName..."
+
+        $process = Start-Process -FilePath $installerPath -ArgumentList $script:SilentArgsMap["NET"] -Wait -PassThru -WindowStyle Hidden
+        Install-DotNetProcess -Process $process -RebootRequired $RebootRequired | Out-Null
+    }
+    catch {
+        Write-Warning "  Failed to update .NET $MajorVersion $displayName : $_"
+        if (Test-Path $tempInstallerPath) {
+            Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # Scan for installed versions
@@ -1151,14 +1667,16 @@ if ($releaseValue) {
 # Check .NET (Core/5+) versions
 Write-Host "Checking .NET (Core/5+) versions..." -ForegroundColor Gray
 $dotnetInfo = Get-InstalledDotNetVersions
+if (-not $dotnetInfo) {
+    $dotnetInfo = @{ Available = $false; Runtimes = @(); SDKs = @() }
+}
 
 if ($dotnetInfo.Available) {
     Write-Verbose "Checking for installed .NET versions. Found $($dotnetInfo.Runtimes.Count) runtimes and $($dotnetInfo.SDKs.Count) SDKs"
     
     # Debug: Show what we found
     if ($dotnetInfo.Runtimes.Count -eq 0 -and $dotnetInfo.SDKs.Count -eq 0) {
-        Write-Host "  DEBUG: dotnet command returned no runtimes or SDKs" -ForegroundColor Yellow
-        Write-Host "  DEBUG: This might indicate dotnet is not in PATH or no .NET versions are installed" -ForegroundColor Yellow
+        Write-Verbose "dotnet command returned no runtimes or SDKs"
     }
     else {
         Write-Verbose "Sample runtime output: $($dotnetInfo.Runtimes[0..([Math]::Min(2, $dotnetInfo.Runtimes.Count-1))] -join ' | ')"
@@ -1202,8 +1720,7 @@ if ($dotnetInfo.Available) {
     }
 }
 else {
-    Write-Host "  DEBUG: dotnet command not available or failed" -ForegroundColor Yellow
-    Write-Host "  DEBUG: Check if dotnet is installed and in PATH" -ForegroundColor Yellow
+    Write-Verbose "dotnet command not available or failed"
 }
 
 Write-Host ""
@@ -1213,8 +1730,10 @@ Write-Host "=============================================" -ForegroundColor Cyan
 
 if ($installedVersions.Count -eq 0) {
     Write-Host "No .NET installations detected." -ForegroundColor Yellow
-    Write-Host "Nothing to update." -ForegroundColor Yellow
-    exit 0
+    if (-not $DryRun) {
+        Write-Host "Nothing to update." -ForegroundColor Yellow
+        exit 0
+    }
 }
 
 # Display what was found
@@ -1255,6 +1774,18 @@ foreach ($version in $installedVersions.Keys | Sort-Object) {
 Write-Host ""
 Write-Host "Total .NET installations found: $($installedVersions.Count)" -ForegroundColor Cyan
 Write-Host ""
+
+if ($DryRun) {
+    Invoke-DryRunReport -InstalledVersions $installedVersions -DotNetVersionsTable $DotNetVersions -DotNetInfo $dotnetInfo
+    exit 0
+}
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Error "Administrator privileges are required to install updates. Use -DryRun to scan without installing."
+    exit 1
+}
+
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Beginning updates..." -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
@@ -1264,13 +1795,6 @@ Write-Host ""
 $TempDir = $env:TEMP
 $RebootRequired = $false
 $downloadedFiles = @()
-$dotNet9InstalledThisSession = $false  # Track if .NET 9 was installed to prevent duplicate installations
-
-# Silent installation arguments
-$SilentArgsMap = @{
-    "Framework" = "/quiet", "/norestart"
-    "NET" = "/install", "/quiet", "/norestart"
-}
 
 try {
     $currentUpdate = 0
@@ -1315,25 +1839,8 @@ try {
 
                 if (Test-Path $installerPath) {
                     Write-Host "  Installing .NET Framework $($netInfo.TargetVersion)..."
-                    $silentArgs = $SilentArgsMap["Framework"]
-                    $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
-
-                    switch ($Process.ExitCode) {
-                        0 {
-                            Write-Host "  Installation successful." -ForegroundColor Green
-                        }
-                        3010 {
-                            Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
-                            $RebootRequired = $true
-                        }
-                        1641 {
-                            Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
-                            $RebootRequired = $true
-                        }
-                        default {
-                            Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
-                        }
-                    }
+                    $process = Start-Process -FilePath $installerPath -ArgumentList $script:SilentArgsMap["Framework"] -Wait -PassThru -WindowStyle Hidden
+                    Install-DotNetProcess -Process $process -RebootRequired ([ref]$RebootRequired) | Out-Null
                 }
             }
             catch {
@@ -1341,248 +1848,23 @@ try {
             }
         }
         else {
-            # .NET (Core/5+) update logic
+            $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
             Write-Host "[$currentUpdate/$($installedVersions.Count)] Checking .NET $($version.Split('-')[1])..." -ForegroundColor Cyan
-            
-            # Extract current version from installed info - check Desktop, ASP.NET Core, or Runtime
-            $currentVersion = $null
-            if ($installed.Desktop) {
-                $versionMatch = $installed.Desktop -match "(\d+\.\d+\.\d+)"
-                if ($versionMatch) {
-                    $currentVersion = $matches[1]
-                }
-            }
-            elseif ($installed.AspCore) {
-                $versionMatch = $installed.AspCore -match "(\d+\.\d+\.\d+)"
-                if ($versionMatch) {
-                    $currentVersion = $matches[1]
-                }
-            }
-            elseif ($installed.Runtime) {
-                $versionMatch = $installed.Runtime -match "(\d+\.\d+\.\d+)"
-                if ($versionMatch) {
-                    $currentVersion = $matches[1]
-                }
-            }
-            
-            if ($currentVersion) {
-                Write-Host "  Current .NET $($version.Split('-')[1]) version: $currentVersion" -ForegroundColor Gray
-                
-                # Check if this is .NET 7.x or 8.x that should be updated to .NET 9.x
-                $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
-                $shouldUpdateTo9 = ($majorVersion -eq 7 -or $majorVersion -eq 8)
-                
-                # Check OS compatibility before updating
-                if (-not (Test-DotNetVersionSupported -DotNetMajorVersion "9")) {
-                    Write-Host "  .NET 9 is not supported on this OS version - Skipping update" -ForegroundColor Yellow
-                    Write-Host "  Current .NET $majorVersion will remain installed" -ForegroundColor Cyan
-                    continue
-                }
-                
-                if ($shouldUpdateTo9) {
-                    # Check if .NET 9 is already installed or was installed this session
-                    $dotnet9Installed = $installedVersions.Keys | Where-Object { $_ -match "NET-9\.0" }
 
-                    if ($dotnet9Installed -or $dotNet9InstalledThisSession) {
-                        Write-Host "  .NET 9.0 is already installed - Skipping upgrade from .NET $majorVersion" -ForegroundColor Cyan
-                        continue
-                    }
-                    
-                    Write-Host "  .NET $($version.Split('-')[1]) detected - updating to latest .NET 9.x..." -ForegroundColor Yellow
+            $componentsToUpdate = Get-InstalledDotNetComponents -Installed $installed
 
-                    # Determine which component to download based on what's installed
-                    # Priority: Desktop (includes Runtime) > AspCore (includes Runtime) > Runtime
-                    $componentToInstall = if ($installed.Desktop) {
-                        "Desktop"
-                    } elseif ($installed.AspCore) {
-                        "Runtime"  # For server scenarios, install base Runtime instead of Desktop
-                    } else {
-                        "Runtime"
-                    }
-
-                    Write-Host "  Detected runtime type: $componentToInstall" -ForegroundColor Gray
-
-                    # Get the download URL dynamically from Microsoft
-                    Write-Host "  Getting download URL from Microsoft..." -ForegroundColor Gray
-                    $url = Get-DotNetDownloadUrl -MajorVersion 9 -Component $componentToInstall
-
-                    if (-not $url) {
-                        Write-Warning "  Could not get download URL. Skipping update."
-                        continue
-                    }
-
-                    Write-Host "  Download URL: $url" -ForegroundColor Gray
-                    $installerPath = Join-Path $TempDir "dotnet-9.0-$($componentToInstall.ToLower()).exe"
-                    $downloadedFiles += $installerPath
-                    
-                    try {
-                        $componentDisplayName = if ($componentToInstall -eq "Desktop") { "Desktop Runtime" } else { "Runtime" }
-                        Write-Host "  Downloading latest .NET 9.0 $componentDisplayName..."
-                        Invoke-WebRequestWithRetry -Uri $url -OutFile $installerPath
-                        Write-Host "  Download complete." -ForegroundColor Green
-
-                        # Validate downloaded file
-                        Write-Host "  Validating downloaded file..." -ForegroundColor Gray
-                        if (-not (Test-DownloadedFile -FilePath $installerPath -MinimumSizeBytes 1048576)) {
-                            Write-Warning "  Downloaded file validation failed. Skipping installation."
-                            continue
-                        }
-                        Write-Host "  Validation successful." -ForegroundColor Green
-
-                        if (Test-Path $installerPath) {
-                            # Check installer version
-                            $installerVersion = Get-InstallerVersion -FilePath $installerPath
-                            if ($installerVersion) {
-                                Write-Host "  Downloaded installer version: $installerVersion" -ForegroundColor Gray
-                            }
-
-                            Write-Host "  Installing .NET 9.0 $componentDisplayName..."
-                            $silentArgs = $SilentArgsMap["NET"]
-                            $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
-                            
-                            switch ($Process.ExitCode) {
-                                0 {
-                                    Write-Host "  Installation successful." -ForegroundColor Green
-                                    $dotNet9InstalledThisSession = $true
-                                }
-                                3010 {
-                                    Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
-                                    $RebootRequired = $true
-                                    $dotNet9InstalledThisSession = $true
-                                }
-                                1641 {
-                                    Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
-                                    $RebootRequired = $true
-                                    $dotNet9InstalledThisSession = $true
-                                }
-                                default {
-                                    Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
-                                }
-                            }
-                        }
-                    }
-                    catch {
-                        Write-Warning "  Failed: $_"
-                    }
-                }
-                else {
-                    # For .NET 6.0, 8.0 (LTS) and 9.0, check for patch updates
-                    $majorVersion = [int]$version.Split('-')[1].Split('.')[0]
-
-                    Write-Host "  Checking for .NET $majorVersion.0 patch updates..." -ForegroundColor Gray
-
-                    # First, check if we're already on the latest version
-                    Write-Host "  Querying Microsoft API for latest version..." -ForegroundColor Gray
-                    $latestVersion = Get-DotNetLatestVersion -MajorVersion $majorVersion
-                    
-                    if ($latestVersion) {
-                        Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
-                        Write-Host "  Current installed version: $currentVersion" -ForegroundColor Gray
-                        
-                        # Compare versions - if we're already up to date, skip
-                        if (Compare-Version -CurrentVersion $currentVersion -TargetVersion $latestVersion) {
-                            Write-Host "  .NET $majorVersion.0 is already up to date - Skipping" -ForegroundColor Cyan
-                            continue
-                        }
-                        else {
-                            Write-Host "  Update available: $currentVersion -> $latestVersion" -ForegroundColor Yellow
-                        }
-                    }
-                    else {
-                        Write-Host "  Could not determine latest version from API, proceeding with download check..." -ForegroundColor Yellow
-                    }
-
-                    # Determine which component to download based on what's installed
-                    $componentToInstall = if ($installed.Desktop) {
-                        "Desktop"
-                    } elseif ($installed.AspCore) {
-                        "Runtime"
-                    } else {
-                        "Runtime"
-                    }
-
-                    # Get the latest download URL
-                    $url = Get-DotNetDownloadUrl -MajorVersion $majorVersion -Component $componentToInstall
-
-                    if (-not $url) {
-                        Write-Host "  Could not get download URL. Skipping update check." -ForegroundColor Gray
-                        continue
-                    }
-
-                    # Download to temp location to check version
-                    $tempInstallerPath = Join-Path $TempDir "dotnet-$majorVersion.0-$($componentToInstall.ToLower())-check.exe"
-
-                    try {
-                        Write-Host "  Downloading latest version info..." -ForegroundColor Gray
-                        Invoke-WebRequestWithRetry -Uri $url -OutFile $tempInstallerPath
-
-                        # Validate downloaded file
-                        if (-not (Test-DownloadedFile -FilePath $tempInstallerPath -MinimumSizeBytes 1048576)) {
-                            Write-Warning "  Downloaded file validation failed. Skipping update check."
-                            if (Test-Path $tempInstallerPath) {
-                                Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
-                            }
-                            continue
-                        }
-
-                        if (Test-Path $tempInstallerPath) {
-                            # Check installer version
-                            $latestVersion = Get-InstallerVersion -FilePath $tempInstallerPath
-
-                            if ($latestVersion) {
-                                Write-Host "  Latest available version: $latestVersion" -ForegroundColor Gray
-                                Write-Host "  Current installed version: $currentVersion" -ForegroundColor Gray
-
-                                # Compare versions
-                                if (Compare-Version -CurrentVersion $currentVersion -TargetVersion $latestVersion) {
-                                    Write-Host "  .NET $majorVersion.0 is already up to date - Skipping" -ForegroundColor Cyan
-                                    Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
-                                } else {
-                                    Write-Host "  Update available: $currentVersion -> $latestVersion" -ForegroundColor Yellow
-
-                                    # Rename temp file to final installer path
-                                    $installerPath = Join-Path $TempDir "dotnet-$majorVersion.0-$($componentToInstall.ToLower()).exe"
-                                    Move-Item -Path $tempInstallerPath -Destination $installerPath -Force
-                                    $downloadedFiles += $installerPath
-
-                                    $componentDisplayName = if ($componentToInstall -eq "Desktop") { "Desktop Runtime" } else { "Runtime" }
-                                    Write-Host "  Installing .NET $majorVersion.0 $componentDisplayName ($latestVersion)..."
-                                    $silentArgs = $SilentArgsMap["NET"]
-                                    $Process = Start-Process -FilePath $installerPath -ArgumentList $silentArgs -Wait -PassThru -WindowStyle Hidden
-
-                                    switch ($Process.ExitCode) {
-                                        0 {
-                                            Write-Host "  Installation successful." -ForegroundColor Green
-                                        }
-                                        3010 {
-                                            Write-Host "  Installation successful. Reboot required." -ForegroundColor Yellow
-                                            $RebootRequired = $true
-                                        }
-                                        1641 {
-                                            Write-Host "  Installation successful. Reboot initiated." -ForegroundColor Yellow
-                                            $RebootRequired = $true
-                                        }
-                                        default {
-                                            Write-Warning "  Exit code: $($Process.ExitCode) (may indicate already updated or minor issue)"
-                                        }
-                                    }
-                                }
-                            } else {
-                                Write-Host "  Could not determine installer version - Skipping" -ForegroundColor Gray
-                                Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
-                            }
-                        }
-                    }
-                    catch {
-                        Write-Warning "  Failed to check for updates: $_"
-                        if (Test-Path $tempInstallerPath) {
-                            Remove-Item -Path $tempInstallerPath -Force -ErrorAction SilentlyContinue
-                        }
-                    }
-                }
+            if ($componentsToUpdate.Count -eq 0) {
+                Write-Status "  No component versions detected - Skipping" Cyan
             }
             else {
-                Write-Host "  .NET $($version.Split('-')[1]) is installed but no update needed" -ForegroundColor Cyan
+                foreach ($component in $componentsToUpdate) {
+                    Update-DotNetComponent -MajorVersion $majorVersion `
+                        -Component $component.Type `
+                        -CurrentVersion $component.CurrentVersion `
+                        -TempDir $TempDir `
+                        -RebootRequired ([ref]$RebootRequired) `
+                        -DownloadedFiles ([ref]$downloadedFiles)
+                }
             }
         }
         Write-Host ""
@@ -1592,118 +1874,102 @@ try {
     Write-Host "=============================================" -ForegroundColor Cyan
     Write-Host "Update process completed." -ForegroundColor Green
     
-    # Check if we should remove old versions
     if ($RemoveOldVersions) {
         Write-Host ""
         Write-Host "=============================================" -ForegroundColor Cyan
-        Write-Host "Checking for old .NET versions to remove..." -ForegroundColor Cyan
+        Write-Host "Checking for unused .NET versions to remove..." -ForegroundColor Cyan
         Write-Host "=============================================" -ForegroundColor Cyan
         Write-Host ""
-        
-        # Check if .NET 9 is installed
+
         $dotnetInfo = Get-InstalledDotNetVersions
-        $dotnet9Installed = $false
-        
+        $versionsToRemove = @()
+        $majorsInUse = @{}
+
         if ($dotnetInfo.Available) {
-            $dotnet9Runtimes = $dotnetInfo.Runtimes | Where-Object { $_ -match "Microsoft\.NETCore\.App 9\." -or $_ -match "Microsoft\.WindowsDesktop\.App 9\." }
-            if ($dotnet9Runtimes) {
-                $dotnet9Installed = $true
-                Write-Host ".NET 9.0 is installed. Checking for older versions to remove..." -ForegroundColor Green
-                Write-Host ""
-            }
-        }
-        
-        if ($dotnet9Installed) {
-            $versionsToRemove = @()
-            
-            # Check for .NET 6, 7, and 8
             foreach ($runtime in $dotnetInfo.Runtimes) {
-                if ($runtime -match "Microsoft\.NETCore\.App (6|7|8)\.\d+\.\d+") {
-                    $versionMatch = $runtime -match "Microsoft\.NETCore\.App (\d+\.\d+\.\d+)"
-                    if ($versionMatch) {
-                        $version = $matches[1]
-                        $majorVersion = [int]$version.Split('.')[0]
-                        if ($majorVersion -ge 6 -and $majorVersion -le 8) {
-                            $versionsToRemove += @{
-                                Version = $version
-                                Type = "Runtime"
-                                FullName = $runtime
-                            }
-                        }
+                if ($runtime -match 'Microsoft\.(NETCore|WindowsDesktop|AspNetCore)\.App (\d+)\.') {
+                    $majorVersion = [int]$matches[2]
+                    if ($majorVersion -ge 6) {
+                        $majorsInUse[$majorVersion] = $true
                     }
                 }
-                if ($runtime -match "Microsoft\.WindowsDesktop\.App (6|7|8)\.\d+\.\d+") {
-                    $versionMatch = $runtime -match "Microsoft\.WindowsDesktop\.App (\d+\.\d+\.\d+)"
-                    if ($versionMatch) {
-                        $version = $matches[1]
-                        $majorVersion = [int]$version.Split('.')[0]
-                        if ($majorVersion -ge 6 -and $majorVersion -le 8) {
-                            $versionsToRemove += @{
-                                Version = $version
-                                Type = "Desktop"
-                                FullName = $runtime
-                            }
-                        }
-                    }
+            }
+            foreach ($sdk in $dotnetInfo.SDKs) {
+                if ($sdk -match '^(\d+)\.') {
+                    $majorsInUse[[int]$matches[1]] = $true
                 }
-                if ($runtime -match "Microsoft\.AspNetCore\.App (6|7|8)\.\d+\.\d+") {
-                    $versionMatch = $runtime -match "Microsoft\.AspNetCore\.App (\d+\.\d+\.\d+)"
-                    if ($versionMatch) {
+            }
+
+            $installedMajors = $majorsInUse.Keys | Sort-Object
+            $newestMajor = ($installedMajors | Measure-Object -Maximum).Maximum
+
+            foreach ($runtime in $dotnetInfo.Runtimes) {
+                $candidates = @(
+                    @{ Pattern = 'Microsoft\.NETCore\.App (\d+\.\d+\.\d+)'; Type = 'Runtime' }
+                    @{ Pattern = 'Microsoft\.WindowsDesktop\.App (\d+\.\d+\.\d+)'; Type = 'Desktop' }
+                    @{ Pattern = 'Microsoft\.AspNetCore\.App (\d+\.\d+\.\d+)'; Type = 'AspCore' }
+                )
+                foreach ($candidate in $candidates) {
+                    if ($runtime -match $candidate.Pattern) {
                         $version = $matches[1]
                         $majorVersion = [int]$version.Split('.')[0]
-                        if ($majorVersion -ge 6 -and $majorVersion -le 8) {
+                        if ($majorVersion -lt $newestMajor -and -not (Test-DotNetVersionInUse -MajorVersion $majorVersion)) {
                             $versionsToRemove += @{
                                 Version = $version
-                                Type = "AspCore"
+                                Type = $candidate.Type
                                 FullName = $runtime
+                                MajorVersion = $majorVersion
                             }
                         }
                     }
                 }
             }
-            
-            # Check for SDKs
+
             foreach ($sdk in $dotnetInfo.SDKs) {
-                if ($sdk -match "^([678])\.\d+\.\d+") {
-                    $versionMatch = $sdk -match "^(\d+\.\d+\.\d+)"
-                    if ($versionMatch) {
-                        $version = $matches[1]
+                if ($sdk -match '^(\d+\.\d+\.\d+)') {
+                    $version = $matches[1]
+                    $majorVersion = [int]$version.Split('.')[0]
+                    if ($majorVersion -lt $newestMajor -and -not (Test-DotNetVersionInUse -MajorVersion $majorVersion)) {
                         $versionsToRemove += @{
                             Version = $version
-                            Type = "SDK"
+                            Type = 'SDK'
                             FullName = $sdk
+                            MajorVersion = $majorVersion
                         }
                     }
                 }
             }
-            
-            if ($versionsToRemove.Count -gt 0) {
-                Write-Host "Found $($versionsToRemove.Count) older .NET version(s) to remove:" -ForegroundColor Yellow
-                foreach ($item in $versionsToRemove) {
-                    Write-Host "  - $($item.FullName)" -ForegroundColor Gray
+        }
+
+        $seen = @{}
+        $versionsToRemove = $versionsToRemove | Where-Object {
+            $key = "$($_.Type)-$($_.Version)"
+            if ($seen[$key]) { $false } else { $seen[$key] = $true; $true }
+        }
+
+        if ($versionsToRemove.Count -gt 0) {
+            Write-Host "Found $($versionsToRemove.Count) unused older version(s) to remove:" -ForegroundColor Yellow
+            foreach ($item in $versionsToRemove) {
+                Write-Host "  - $($item.FullName)" -ForegroundColor Gray
+            }
+            Write-Host ""
+
+            $removedCount = 0
+            foreach ($item in $versionsToRemove) {
+                Write-Host "Removing $($item.Type) $($item.Version)..." -ForegroundColor Yellow
+                if (Uninstall-DotNetVersion -Version $item.Version -Type $item.Type) {
+                    $removedCount++
                 }
                 Write-Host ""
-                
-                $removedCount = 0
-                foreach ($item in $versionsToRemove) {
-                    Write-Host "Removing $($item.Type) $($item.Version)..." -ForegroundColor Yellow
-                    if (Uninstall-DotNetVersion -Version $item.Version -Type $item.Type) {
-                        $removedCount++
-                    }
-                    Write-Host ""
-                }
-                
-                Write-Host "Removed $removedCount of $($versionsToRemove.Count) older .NET version(s)." -ForegroundColor $(if ($removedCount -eq $versionsToRemove.Count) { "Green" } else { "Yellow" })
             }
-            else {
-                Write-Host "No older .NET versions (6, 7, or 8) found to remove." -ForegroundColor Green
-            }
+
+            Write-Host "Removed $removedCount of $($versionsToRemove.Count) unused version(s)." -ForegroundColor $(if ($removedCount -eq $versionsToRemove.Count) { "Green" } else { "Yellow" })
         }
         else {
-            Write-Host ".NET 9.0 is not installed. Skipping removal of older versions." -ForegroundColor Yellow
-            Write-Host "Note: Only removing older versions when .NET 9.0 is present." -ForegroundColor Gray
+            Write-Host "No unused older .NET versions found to remove." -ForegroundColor Green
+            Write-Host "Versions still referenced by apps, or only one major version is installed." -ForegroundColor Gray
         }
-        
+
         Write-Host ""
         Write-Host "=============================================" -ForegroundColor Cyan
     }
@@ -1740,3 +2006,5 @@ finally {
     
     Write-Host "Cleanup complete."
 }
+
+exit 0
