@@ -1,14 +1,14 @@
 # .NET Runtime Updater
 
-PowerShell script that detects installed .NET Framework and .NET (6–9) components, patches each to the latest release, and leaves all versions in place unless you opt in to removal.
+PowerShell script that detects installed .NET Framework and .NET (6-9) components, patches each to the latest release, and leaves all versions in place unless you opt in to removal.
 
 Repo: **https://github.com/monobrau/dotnet-updater**
 
 ## ScreenConnect (recommended)
 
-Paste into ScreenConnect **Commands** as a `#!ps` block. Scripts download from GitHub at run time — nothing to deploy first.
+Paste into ScreenConnect **Commands** as a `#!ps` block. Scripts download from GitHub at run time; nothing to deploy first.
 
-### Dry run (preview — no installs)
+### Dry run (preview, no installs)
 
 Run this first on each machine. No admin required.
 
@@ -28,7 +28,7 @@ Look for `Mode: DRY RUN` and `Updates available: N` in the summary. No `Download
 
 ### Update (install patches)
 
-Run as **admin / SYSTEM** after dry run looks good. Allow **5–10 minutes**.
+Run as **admin / SYSTEM** after dry run looks good. Allow **5-10 minutes**.
 
 ```powershell
 #!ps
@@ -46,9 +46,9 @@ Full log: `C:\temp\dotnet-updater-last-run.log`
 
 ### Tips
 
-- **Dry run first, update second** — dry run uses `$env:DOTNET_UPDATER_DRYRUN` or `-DryRun`; update clears that and must not include it.
+- **Dry run first, update second**: dry run uses `$env:DOTNET_UPDATER_DRYRUN` or `-DryRun`; update clears that and must not include it.
 - **Reboot** if dry run shows `PENDING REBOOT` for .NET Framework before running update again.
-- **Missing runtimes** (e.g. apps need .NET 6 but it is not installed) are reported in dry run but not installed automatically — install those manually.
+- **Missing runtimes** (e.g. apps need .NET 6 but it is not installed) are reported in dry run but not installed automatically; install those manually.
 - More commands (cmd one-liners, remove-old): **[GITHUB-COMMANDS.txt](GITHUB-COMMANDS.txt)**
 
 ## Run locally
@@ -65,8 +65,8 @@ Full log: `C:\temp\dotnet-updater-last-run.log`
 
 - Patches each **installed** major version (6, 7, 8, 9) to its latest release
 - Updates **Desktop**, **ASP.NET Core**, **Runtime**, and **SDK** independently
-- Upgrades **.NET Framework** to the newest supported release (e.g. 4.8 → 4.8.1)
-- `-DryRun`: scans apps for required versions, previews updates — no installs
+- Upgrades **.NET Framework** to the newest supported release (e.g. 4.8 to 4.8.1)
+- `-DryRun`: scans apps for required versions, previews updates; no installs
 - `-RemoveOldVersions`: removes older majors only when apps no longer reference them
 
 ## Requirements
