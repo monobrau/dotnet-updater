@@ -6,22 +6,14 @@ Repo: **https://github.com/monobrau/dotnet-updater**
 
 ## ScreenConnect (recommended)
 
-Paste into ScreenConnect **Commands** as a `#!ps` block. Scripts download from GitHub at run time; nothing to deploy first.
+Paste **one line** into ScreenConnect **Commands** (after `#!ps`). Use the main script URL only; ScreenConnect can truncate longer URLs (such as `dotnet-updater-screenconnect.ps1`) and break the command with `Missing ')'` / string terminator errors.
 
 ### Dry run (preview, no installs)
 
 Run this first on each machine. No admin required.
 
-```powershell
-#!ps
-#maxlength=200000
-#timeout=300000
-$env:DOTNET_UPDATER_DRYRUN = '1'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-$t = Get-Date -Format 'yyyyMMddHHmmss'
-(New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache=$t", "C:\temp\dotnet-updater.ps1")
-& "C:\temp\dotnet-updater.ps1" -DryRun
+```
+#!ps #maxlength=200000 #timeout=300000 $env:DOTNET_UPDATER_DRYRUN = '1' [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null $t = Get-Date -Format 'yyyyMMddHHmmss' (New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache=$t", "C:\temp\dotnet-updater.ps1") & "C:\temp\dotnet-updater.ps1" -DryRun
 ```
 
 Look for `Mode: DRY RUN` and `Updates available: N` in the summary. No `Downloading` or `Installing` lines.
@@ -30,26 +22,19 @@ Look for `Mode: DRY RUN` and `Updates available: N` in the summary. No `Download
 
 Run as **admin / SYSTEM** after dry run looks good. Allow **5-10 minutes**.
 
-```powershell
-#!ps
-#maxlength=200000
-#timeout=600000
-Remove-Item Env:DOTNET_UPDATER_DRYRUN -ErrorAction SilentlyContinue
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-$t = Get-Date -Format 'yyyyMMddHHmmss'
-(New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache=$t", "C:\temp\dotnet-updater-sc.ps1")
-& "C:\temp\dotnet-updater-sc.ps1"
+```
+#!ps #maxlength=200000 #timeout=600000 Remove-Item Env:DOTNET_UPDATER_DRYRUN -ErrorAction SilentlyContinue [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null $t = Get-Date -Format 'yyyyMMddHHmmss' (New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache=$t", "C:\temp\dotnet-updater.ps1") & "C:\temp\dotnet-updater.ps1"
 ```
 
-Full log: `C:\temp\dotnet-updater-last-run.log`
+Setting `$env:DOTNET_UPDATER_DRYRUN = '0'` before the run also works; only `'1'` enables dry run.
 
 ### Tips
 
-- **Dry run first, update second**: dry run uses `$env:DOTNET_UPDATER_DRYRUN` or `-DryRun`; update clears that and must not include it.
+- **Dry run first, update second**: dry run uses `'1'` or `-DryRun`; update must clear the env var or set it to `'0'`.
+- **Do not use the screenconnect wrapper in ScreenConnect** unless you paste from a file with no truncation; the longer download URL is what caused the parse error you saw (`noc…` cut off mid-URL).
 - **Reboot** if dry run shows `PENDING REBOOT` for .NET Framework before running update again.
 - **Missing runtimes** (e.g. apps need .NET 6 but it is not installed) are reported in dry run but not installed automatically; install those manually.
-- More commands (cmd one-liners, remove-old): **[GITHUB-COMMANDS.txt](GITHUB-COMMANDS.txt)**
+- More commands (cmd one-liners, wrapper with log file): **[GITHUB-COMMANDS.txt](GITHUB-COMMANDS.txt)**
 
 ## Run locally
 

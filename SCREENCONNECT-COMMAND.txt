@@ -1,8 +1,9 @@
-# DRY RUN — use ScreenConnect #!ps block from GITHUB-COMMANDS.txt (recommended)
-# Or paste this ONE line into cmd (do not paste output lines back into cmd):
+# ScreenConnect: paste ONE line per command (#!ps must stay on the same line as the script).
+# Use dotnet-updater.ps1 only. The screenconnect wrapper URL is longer and ScreenConnect may
+# truncate it (error: Missing ')' / string missing terminator at noc...).
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOTNET_UPDATER_DRYRUN='1';$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$t=Get-Date -Format 'yyyyMMddHHmmss';New-Item -Path C:\temp -ItemType Directory -Force -ErrorAction SilentlyContinue|Out-Null;try{(New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache='+$t,'C:\temp\dotnet-updater.ps1');& C:\temp\dotnet-updater.ps1 -DryRun;exit $LASTEXITCODE}catch{Write-Host 'ERROR:' $_.Exception.Message -ForegroundColor Red;exit 1}"
+# DRY RUN
+#!ps #maxlength=200000 #timeout=300000 $env:DOTNET_UPDATER_DRYRUN = '1' [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null $t = Get-Date -Format 'yyyyMMddHHmmss' (New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache=$t", "C:\temp\dotnet-updater.ps1") & "C:\temp\dotnet-updater.ps1" -DryRun
 
-# UPDATE — paste this ONE line only:
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-Item Env:DOTNET_UPDATER_DRYRUN -ErrorAction SilentlyContinue;$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$t=Get-Date -Format 'yyyyMMddHHmmss';New-Item -Path C:\temp -ItemType Directory -Force -ErrorAction SilentlyContinue|Out-Null;try{(New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache='+$t,'C:\temp\dotnet-updater-sc.ps1');& C:\temp\dotnet-updater-sc.ps1;exit $LASTEXITCODE}catch{Write-Host 'ERROR:' $_.Exception.Message -ForegroundColor Red;exit 1}"
+# UPDATE
+#!ps #maxlength=200000 #timeout=600000 Remove-Item Env:DOTNET_UPDATER_DRYRUN -ErrorAction SilentlyContinue [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null $t = Get-Date -Format 'yyyyMMddHHmmss' (New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache=$t", "C:\temp\dotnet-updater.ps1") & "C:\temp\dotnet-updater.ps1"
