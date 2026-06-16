@@ -2,35 +2,54 @@
 
 PowerShell script that detects installed .NET Framework and .NET (6–9) components, patches each to the latest release, and leaves all versions in place unless you opt in to removal.
 
-## Run from GitHub (remote)
+Repo: **https://github.com/monobrau/dotnet-updater**
 
-All copy-paste commands are in **[GITHUB-COMMANDS.txt](GITHUB-COMMANDS.txt)**.
+## ScreenConnect (recommended)
 
-| Task | File section |
-|---|---|
-| ScreenConnect update (recommended) | `SCREENCONNECT — UPDATE` |
-| ScreenConnect dry run | `SCREENCONNECT — DRY RUN` |
-| Full output update | `CMD / POWERSHELL — UPDATE` |
-| Full output dry run | `CMD / POWERSHELL — DRY RUN` |
+Paste into ScreenConnect **Commands** as a `#!ps` block. Scripts download from GitHub at run time — nothing to deploy first.
 
-Quick picks:
+### Dry run (preview — no installs)
 
-**ScreenConnect update:**
+Run this first on each machine. No admin required.
+
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$t=Get-Date -Format 'yyyyMMddHHmmss';New-Item -Path C:\temp -ItemType Directory -Force -ErrorAction SilentlyContinue|Out-Null;try{(New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache='+$t,'C:\temp\dotnet-updater-sc.ps1');& C:\temp\dotnet-updater-sc.ps1;exit $LASTEXITCODE}catch{Write-Host 'ERROR:' $_.Exception.Message -ForegroundColor Red;exit 1}"
+#!ps
+#maxlength=200000
+#timeout=300000
+$env:DOTNET_UPDATER_DRYRUN = '1'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+$t = Get-Date -Format 'yyyyMMddHHmmss'
+(New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache=$t", "C:\temp\dotnet-updater.ps1")
+& "C:\temp\dotnet-updater.ps1" -DryRun
 ```
 
-**ScreenConnect dry run** — use `#!ps` block in [GITHUB-COMMANDS.txt](GITHUB-COMMANDS.txt), or this cmd one-liner (paste **one line only**):
+Look for `Mode: DRY RUN` and `Updates available: N` in the summary. No `Downloading` or `Installing` lines.
+
+### Update (install patches)
+
+Run as **admin / SYSTEM** after dry run looks good. Allow **5–10 minutes**.
+
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOTNET_UPDATER_DRYRUN='1';$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$t=Get-Date -Format 'yyyyMMddHHmmss';New-Item -Path C:\temp -ItemType Directory -Force -ErrorAction SilentlyContinue|Out-Null;try{(New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater.ps1?nocache='+$t,'C:\temp\dotnet-updater.ps1');& C:\temp\dotnet-updater.ps1 -DryRun;exit $LASTEXITCODE}catch{Write-Host 'ERROR:' $_.Exception.Message -ForegroundColor Red;exit 1}"
+#!ps
+#maxlength=200000
+#timeout=600000
+Remove-Item Env:DOTNET_UPDATER_DRYRUN -ErrorAction SilentlyContinue
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+New-Item -Path "C:\temp" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+$t = Get-Date -Format 'yyyyMMddHHmmss'
+(New-Object Net.WebClient).DownloadFile("https://raw.githubusercontent.com/monobrau/dotnet-updater/main/dotnet-updater-screenconnect.ps1?nocache=$t", "C:\temp\dotnet-updater-sc.ps1")
+& "C:\temp\dotnet-updater-sc.ps1"
 ```
 
-- Run installs as **admin / SYSTEM**; `-DryRun` works without elevation.
-- In **cmd**, paste only the single command line — never paste script output back (cmd will try to run each line).
-- Prefer ScreenConnect **`#!ps`** blocks over raw cmd for PowerShell scripts.
-- Allow **5–10 minutes** on update runs.
-- Wrapper always re-downloads the latest script from GitHub (no stale cache).
-- Update runs stream live output to ScreenConnect and save a full log at `C:\temp\dotnet-updater-last-run.log`.
+Full log: `C:\temp\dotnet-updater-last-run.log`
+
+### Tips
+
+- **Dry run first, update second** — dry run uses `$env:DOTNET_UPDATER_DRYRUN` or `-DryRun`; update clears that and must not include it.
+- **Reboot** if dry run shows `PENDING REBOOT` for .NET Framework before running update again.
+- **Missing runtimes** (e.g. apps need .NET 6 but it is not installed) are reported in dry run but not installed automatically — install those manually.
+- More commands (cmd one-liners, remove-old): **[GITHUB-COMMANDS.txt](GITHUB-COMMANDS.txt)**
 
 ## Run locally
 
